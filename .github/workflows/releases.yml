@@ -31,10 +31,7 @@ jobs:
 
       - name: build with pyinstaller
         run: |
-          pyinstaller main.py \
-            --name "Lucile" \
-            --onefile \
-            --windowed
+          pyinstaller main.py --name "Lucile" --onefile --windowed
             
       - name: package windows artifacts
         if: runner.os == 'Windows'
