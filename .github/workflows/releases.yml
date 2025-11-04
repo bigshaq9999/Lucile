@@ -31,12 +31,12 @@ jobs:
 
       - name: build with pyinstaller
         run: |
-          pyinstaller main.py --name "Lucile" --onefile --windowed
+          pyinstaller main.py --name "Lucile" --windowed
             
       - name: package windows artifacts
         if: runner.os == 'Windows'
         run: |
-          Compress-Archive -Path dist/Lucile.exe -DestinationPath Lucile-Windows.zip
+          Compress-Archive -Path dist/Lucile -DestinationPath Lucile-Windows.zip
 
       - name: package macOS artifacts
         if: runner.os == 'macOS'
