@@ -3,7 +3,11 @@ from PySide6 import QtCore, QtWidgets, QtGui
 from ultralytics import YOLO
 
 
-class MyWidget(QtWidgets.QWidget):
+class SegmentBubbleTab(QtWidgets.QWidget):
+    """
+        Class for "Segment Bubble" tab.
+        Load Image, Select Model, Run Inference
+    """
     def __init__(self):
         super().__init__()
 
@@ -16,6 +20,7 @@ class MyWidget(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
         self.image_label.setMinimumSize(6, 10)
+        self.image_label.setStyleSheet("QLabel { border: 1px dashed #aaa; }")
 
         # --- buttons creation --- #
         self.openImageButton = QtWidgets.QPushButton("Open Image")
@@ -106,12 +111,46 @@ class MyWidget(QtWidgets.QWidget):
 
         except Exception as e:
             print(f"An error occured during inference: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", f"Inference failed: \n{e}")
+
+
+class MainApplication(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Lucile")
+
+        # --- main layout --- #
+        self.main_layout = QtWidgets.QVBoxLayout(self)
+
+        # --- tab widgets --- #
+        self.tabs = QtWidgets.QTabWidget()
+        self.main_layout.addWidget(self.tabs)
+
+        # --- actual tabs --- #
+        self.segment_tab = SegmentBubleTab()
+        self.tabs.addTab(self.segment_tab, "Segment bubble")
+
+        self.ocr_tab = QtWidgets.QLabel("OCR")
+        self.ocr_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.tabs.addTab(self.ocr_tab, "OCR")
+
+        self.translate_tab = QtWidgets.QLabel("Translate")
+        self.translate_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.tabs.addTab(self.translate_tab, "Translate")
+
+        self.edit_tab = QtWidgets.QLabel("Edit")
+        self.edit_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.tabs.addTab(self.edit_tab, "Edit")
+
+        self.replace_tab = QtWidgets.QLabel("Replace")
+        self.replace_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.tabs.addTab(self.replace_tab, "Replace")
 
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
 
-    widget = MyWidget()
+    widget = MainApplication()
     widget.resize(800, 600)
     widget.show()
 
