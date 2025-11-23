@@ -5,9 +5,10 @@ from ultralytics import YOLO
 
 class SegmentBubbleTab(QtWidgets.QWidget):
     """
-        Class for "Segment Bubble" tab.
-        Load Image, Select Model, Run Inference
+    Class for "Segment Bubble" tab.
+    Load Image, Select Model, Run Inference
     """
+
     def __init__(self):
         super().__init__()
 
@@ -127,7 +128,7 @@ class MainApplication(QtWidgets.QWidget):
         self.main_layout.addWidget(self.tabs)
 
         # --- actual tabs --- #
-        self.segment_tab = SegmentBubleTab()
+        self.segment_tab = SegmentBubbleTab()
         self.tabs.addTab(self.segment_tab, "Segment bubble")
 
         self.ocr_tab = QtWidgets.QLabel("OCR")
