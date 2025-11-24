@@ -1,6 +1,9 @@
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
 import sys
-from PySide6 import QtCore, QtWidgets, QtGui
 from ultralytics import YOLO
+from PySide6 import QtCore, QtWidgets, QtGui
 
 
 class SegmentBubbleTab(QtWidgets.QWidget):
@@ -124,7 +127,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
             conf_val = self.confidenceSlider.value() / 100.0
 
-            results = self.model(self.image_path, conf=conf_val)
+            results = self.model(self.image_path, conf=conf_val, workers=0)
             result = results[0]
 
             if result.masks is None:
