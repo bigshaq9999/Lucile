@@ -13,52 +13,74 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         super().__init__()
 
         self.model = None
-        self.original_pixmap = None
+        self.image_path = None
+        self.pixmap_item = None
 
-        self.image_label = QtWidgets.QLabel("No image selected")
-        self.image_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.image_label.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-        )
-        self.image_label.setMinimumSize(6, 10)
-        self.image_label.setStyleSheet("QLabel { border: 1px dashed #aaa; }")
+        # --- graphics view --- #
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.view.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
 
         # --- buttons creation --- #
         self.openImageButton = QtWidgets.QPushButton("Open Image")
         self.selectModelButton = QtWidgets.QPushButton("Select Model")
         self.runInferenceButton = QtWidgets.QPushButton("Run Inference")
 
+        self.deleteButton = QtWidgets.QPushButton("Delete Selected Bubble")
+        self.deleteButton.setShortcut(QtGui.QKeySequence.Delete)
+
+        self.zoomInButton = QtWidgets.QPushButton("Zoom In (+)")
+        self.zoomOutButton = QtWidgets.QPushButton("Zoom Out (-)")
+        self.fitButton = QtWidgets.QPushButton("Fit to space")
+
+        # confidence slider
+        self.confidenceLabel = QtWidgets.QLabel("Confidence: 0.25")
+        self.confidenceSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.confidenceSlider.setMinimum(1)
+        self.confidenceSlider.setMaximum(100)
+        self.confidenceSlider.setValue(25)
+        self.confidenceSlider.setTickInterval(10)
+
         # --- layout --- #
         self.layout = QtWidgets.QVBoxLayout(self)
-        self.layout.addWidget(self.image_label)
 
-        button_layout = QtWidgets.QHBoxLayout()
-        button_layout.addWidget(self.selectModelButton)
-        button_layout.addWidget(self.openImageButton)
-        button_layout.addWidget(self.runInferenceButton)
+        top_layout = QtWidgets.QHBoxLayout()
+        top_layout.addWidget(self.selectModelButton)
+        top_layout.addWidget(self.openImageButton)
+        self.layout.addLayout(top_layout)
 
-        self.layout.addLayout(button_layout)
+        inf_layout = QtWidgets.QHBoxLayout()
+        inf_layout.addWidget(self.confidenceLabel)
+        inf_layout.addWidget(self.confidenceSlider)
+        inf_layout.addWidget(self.runInferenceButton)
+        self.layout.addLayout(inf_layout)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.addWidget(self.zoomInButton)
+        zoom_layout.addWidget(self.zoomOutButton)
+        zoom_layout.addWidget(self.fitButton)
+        self.layout.addLayout(zoom_layout)
+
+        self.layout.addWidget(self.view)
+
+        edit_layout = QtWidgets.QHBoxLayout()
+        edit_layout.addStretch()
+        edit_layout.addWidget(self.deleteButton)
+        self.layout.addLayout(edit_layout)
 
         # --- signal and slot connection --- #
         self.selectModelButton.clicked.connect(self.selectModel)
         self.openImageButton.clicked.connect(self.openImage)
         self.runInferenceButton.clicked.connect(self.runInference)
+        self.deleteButton.clicked.connect(self.deleteSelectedBubble)
+        self.confidenceSlider.valueChanged.connect(self.updateConfLabel)
+        self.zoomInButton.clicked.connect(self.zoomIn)
+        self.zoomOutButton.clicked.connect(self.zoomOut)
+        self.fitButton.clicked.connect(self.fitView)
 
-    def update_image_display(self):
-        if self.original_pixmap is None:
-            return
-
-        label_size = self.image_label.size()
-
-        scaled_pixmap = self.original_pixmap.scaled(
-            label_size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation
-        )
-
-        self.image_label.setPixmap(scaled_pixmap)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_image_display()
+    def updateConfLabel(self, value):
+        self.confidenceLabel.setText(f"Confidence: {value / 100.0:.2f}")
 
     @QtCore.Slot()
     def openImage(self):
@@ -66,11 +88,13 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             self, "Open Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
         )
 
-        self.image_path = file_path
-
         if file_path:
-            self.original_pixmap = QtGui.QPixmap(file_path)
-            self.update_image_display()
+            self.image_path = file_path
+            self.scene.clear()
+            pixmap = QtGui.QPixmap(file_path)
+            self.pixmap_item = self.scene.addPixmap(pixmap)
+            self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+            self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
 
     @QtCore.Slot()
     def selectModel(self):
@@ -82,37 +106,71 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             try:
                 self.model = YOLO(file_path)
                 print(f"Model loaded successfully from {file_path}")
+                QtWidgets.QMessageBox.information(self, "Success", "Model Loaded.")
             except Exception as e:
-                print(f"Error loading model: {e}")
+                QtWidgets.QMessageBox.critical(
+                    self, "Error", f"Could not load model: {e}"
+                )
 
     @QtCore.Slot()
     def runInference(self):
-        if not self.model:
-            print("Please select a model first.")
+        if not self.model or not self.image_path:
             return
-        if not self.image_path:
-            print("Please open an image first.")
-            return
+
         try:
-            results = self.model(self.image_path)
-            annotated_image = results[0].plot()
+            for item in self.scene.items():
+                if item != self.pixmap_item:
+                    self.scene.removeItem(item)
 
-            height, width, channel = annotated_image.shape
-            bytes_per_line = 3 * width
-            q_image = QtGui.QImage(
-                annotated_image.data,
-                width,
-                height,
-                bytes_per_line,
-                QtGui.QImage.Format_BGR888,
-            )
+            conf_val = self.confidenceSlider.value() / 100.0
 
-            self.original_pixmap = QtGui.QPixmap.fromImage(q_image)
-            self.update_image_display()
+            results = self.model(self.image_path, conf=conf_val)
+            result = results[0]
+
+            if result.masks is None:
+                print("No segmentation masks found.")
+                return
+
+            for segment_points in result.masks.xy:
+                polygon = QtGui.QPolygonF()
+                for point in segment_points:
+                    polygon.append(QtCore.QPointF(point[0], point[1]))
+
+                poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
+
+                pen = QtGui.QPen(QtCore.Qt.red)
+                pen.setWidth(2)
+                poly_item.setPen(pen)
+                poly_item.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0, 50)))
+
+                poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
+                self.scene.addItem(poly_item)
+
+            print(f"Found {len(result.masks.xy)} segmented bubbles")
 
         except Exception as e:
-            print(f"An error occured during inference: {e}")
+            print(f"Inference Error: {e}")
             QtWidgets.QMessageBox.critical(self, "Error", f"Inference failed: \n{e}")
+
+    @QtCore.Slot()
+    def deleteSelectedBubble(self):
+        selected_items = self.scene.selectedItems()
+        for item in selected_items:
+            if item != self.pixmap_item:
+                self.scene.removeItem(item)
+
+    @QtCore.Slot()
+    def zoomIn(self):
+        self.view.scale(1.2, 1.2)
+
+    @QtCore.Slot()
+    def zoomOut(self):
+        self.view.scale(0.8, 0.8)
+
+    @QtCore.Slot()
+    def fitView(self):
+        if self.pixmap_item:
+            self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
 
 
 class MainApplication(QtWidgets.QWidget):
