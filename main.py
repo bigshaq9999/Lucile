@@ -2,8 +2,26 @@ import os
 os.environ['OMP_NUM_THREADS'] = '1'
 os.environ['MKL_NUM_THREADS'] = '1'
 import sys
+import cv2
 from ultralytics import YOLO
 from PySide6 import QtCore, QtWidgets, QtGui
+from PIL import Image
+from MangaOCRModel import MangaOCRModel
+
+
+class Bubble:
+    def __init__(self, polygon, bbox):
+        self.polygon = polygon
+        self.bbox = bbox
+        self.text_ocr = ""
+        self.text_translated = ""
+
+
+class AppData:
+    def __init__(self):
+        self.image_path = None
+        self.pil_image = None
+        self.bubbles = []   
 
 
 class SegmentBubbleTab(QtWidgets.QWidget):
@@ -12,11 +30,11 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     Load Image, Select Model, Run Inference
     """
 
-    def __init__(self):
+    def __init__(self, data_context):
         super().__init__()
+        self.data = data_context
 
         self.model = None
-        self.image_path = None
         self.pixmap_item = None
 
         # --- graphics view --- #
@@ -93,6 +111,12 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
         if file_path:
             self.image_path = file_path
+            self.data.image_path = file_path
+            try:
+                self.data.pil_image = Image.open(file_path)
+            except Exception as e:
+                print(f"Error loading PIL image: {e}")
+
             self.scene.clear()
             pixmap = QtGui.QPixmap(file_path)
             self.pixmap_item = self.scene.addPixmap(pixmap)
@@ -134,11 +158,17 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 print("No segmentation masks found.")
                 return
 
-            for segment_points in result.masks.xy:
+            masks = result.masks.xy
+            boxes = result.boxes.xyxy.cpu().numpy()
+
+            for segment_points, box in zip(masks, boxes):
                 polygon = QtGui.QPolygonF()
                 for point in segment_points:
                     polygon.append(QtCore.QPointF(point[0], point[1]))
 
+                bubble = Bubble(polygon, box.tolist())
+                self.data.bubbles.append(bubble)
+                
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
 
                 pen = QtGui.QPen(QtCore.Qt.red)
@@ -147,6 +177,9 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 poly_item.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0, 50)))
 
                 poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
+
+                poly_item.setData(0, bubble)
+                
                 self.scene.addItem(poly_item)
 
             print(f"Found {len(result.masks.xy)} segmented bubbles")
@@ -160,6 +193,9 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         selected_items = self.scene.selectedItems()
         for item in selected_items:
             if item != self.pixmap_item:
+                bubble_ref = item.data(0)
+                if bubble_ref in self.data.bubbles:
+                    self.data.bubbles.remove(bubble_ref)
                 self.scene.removeItem(item)
 
     @QtCore.Slot()
@@ -176,10 +212,124 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
 
 
+class OCRTab(QtWidgets.QWidget):
+    def __init__(self, data_context):
+        super().__init__()
+        self.data = data_context
+        self.ocr_model = MangaOCRModel()
+        self.model_loaded = False
+
+        self.layout = QtWidgets.QHBoxLayout(self)
+
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+
+        self.loadModelButton = QtWidgets.QPushButton("Load OCR Model")
+        self.runOCRButton = QtWidgets.QPushButton("Run OCR")
+        self.resultList = QtWidgets.QListWidget()
+
+        left_layout.addWidget(self.loadModelButton)
+        left_layout.addWidget(self.runOCRButton)
+        left_layout.addWidget(QtWidgets.QLabel("Detected Text:"))
+        left_layout.addWidget(self.resultList)
+
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+
+        self.layout.addWidget(left_widget, 1)
+        self.layout.addWidget(self.view, 2)
+
+        self.loadModelButton.clicked.connect(self.loadModel)
+        self.runOCRButton.clicked.connect(self.runOCR)
+        self.resultList.itemClicked.connect(self.highlightBubble)
+
+    @QtCore.Slot()
+    def loadModel(self):
+        try:
+            self.loadModelButton.setText("Loading...")
+            self.loadModelButton.setEnabled(False)
+            QtWidgets.QApplication.processEvents()
+
+            self.ocr_model.load_model()
+            self.model_loaded = True
+
+            self.loadModelButton.setText("Model Loaded")
+            QtWidgets.QMessageBox.information(self, "success", "MangaOCR model loaded.")
+        except Exception as e:
+            self.loadModelButton.setText("Load OCR model")
+            self.loadModelButton.setEnabled(True)
+            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to load OCR model: {e}")
+
+    @QtCore.Slot()
+    def runOCR(self):
+        if not self.model_loaded:
+            QtWidgets.QMessageBox.warning(self, "warning", "please load the OCR model first.")
+            return
+        if not self.data.pil_image or not self.data.bubbles:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No image or segmented bubbles found. Please go to Segment tab.")
+            return
+
+        self.scene.clear()
+        pixmap = QtGui.QPixmap(self.data.image_path)
+        self.scene.addPixmap(pixmap)
+        self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+        self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+        bboxes = []
+        valid_bubbles = []
+
+        for bubble in self.data.bubbles:
+            bboxes.append(bubble.bbox)
+            valid_bubbles.append(bubble)
+
+        if not bboxes:
+            return
+
+        try:
+            texts = self.ocr_model.predict(self.data.pil_image, bboxes)
+
+            self.resultList.clear()
+
+            for i, text in enumerate(texts):
+                valid_bubbles[i].text_ocr = text
+
+                item = QtWidgets.QListWidgetItem(f"{i+1}: {text}")
+                item.setData(QtCore.Qt.UserRole, valid_bubbles[i])
+                self.resultList.addItem(item)
+
+                x1, y1, x2, y2 = valid_bubbles[i].bbox
+                w = x2 - x1
+                h = y2 - y1
+                rect = QtCore.QRectF(x1, y1, w, h)
+
+                rect_item = QtWidgets.QGraphicsRectItem(rect)
+                rect_item.setPen(QtGui.QPen(QtCore.Qt.blue, 2))
+                self.scene.addItem(rect_item)
+
+                text_item = QtWidgets.QGraphicsTextItem(text)
+                text_item.setDefaultTextColor(QtCore.Qt.blue)
+                text_item.setPos(x1, y1)
+                text_item.setScale(1.5)
+                self.scene.addItem(text_item)
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"OCR Failed: {e}")
+
+    @QtCore.Slot(QtWidgets.QListWidgetItem)
+    def highlightBubble(self, item):
+        bubble = item.data(QtCore.Qt.UserRole)
+        if bubble:
+            x1, y1, x2, y2 = bubble.bbox
+            rect = QtCore.QRectF(x1, y1, x2-x1, y2-y1)
+            self.view.ensureVisible(rect)
+
 class MainApplication(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Lucile")
+
+        self.app_data = AppData()
 
         # --- main layout --- #
         self.main_layout = QtWidgets.QVBoxLayout(self)
@@ -189,11 +339,10 @@ class MainApplication(QtWidgets.QWidget):
         self.main_layout.addWidget(self.tabs)
 
         # --- actual tabs --- #
-        self.segment_tab = SegmentBubbleTab()
+        self.segment_tab = SegmentBubbleTab(self.app_data)
         self.tabs.addTab(self.segment_tab, "Segment bubble")
 
-        self.ocr_tab = QtWidgets.QLabel("OCR")
-        self.ocr_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.ocr_tab = OCRTab(self.app_data)
         self.tabs.addTab(self.ocr_tab, "OCR")
 
         self.translate_tab = QtWidgets.QLabel("Translate")

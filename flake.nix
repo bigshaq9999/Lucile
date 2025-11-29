@@ -60,6 +60,7 @@
 
                     pyside6
                     ultralytics
+                    manga-ocr
                   '';
                 };
 
@@ -96,7 +97,12 @@
                 dbus
                 ;
               inherit (pkgs.xorg) libX11;
-              inherit (pkgs.python312Packages) pyqt6 pyside6 ultralytics;
+              inherit (pkgs.python312Packages)
+                pyqt6
+                pyside6
+                ultralytics
+                # manga-ocr
+                ;
               inherit (pkgs) git pre-commit;
               inherit (pkgs) nix-index nix-prefetch-github nix-prefetch-scripts;
             };
