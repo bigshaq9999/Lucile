@@ -21,7 +21,7 @@ class AppData:
     def __init__(self):
         self.image_path = None
         self.pil_image = None
-        self.bubbles = []   
+        self.bubbles = []
 
 
 class SegmentBubbleTab(QtWidgets.QWidget):
@@ -168,7 +168,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
                 bubble = Bubble(polygon, box.tolist())
                 self.data.bubbles.append(bubble)
-                
+
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
 
                 pen = QtGui.QPen(QtCore.Qt.red)
@@ -179,7 +179,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
 
                 poly_item.setData(0, bubble)
-                
+
                 self.scene.addItem(poly_item)
 
             print(f"Found {len(result.masks.xy)} segmented bubbles")
@@ -259,15 +259,23 @@ class OCRTab(QtWidgets.QWidget):
         except Exception as e:
             self.loadModelButton.setText("Load OCR model")
             self.loadModelButton.setEnabled(True)
-            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to load OCR model: {e}")
+            QtWidgets.QMessageBox.critical(
+                self, "Error", f"Failed to load OCR model: {e}"
+            )
 
     @QtCore.Slot()
     def runOCR(self):
         if not self.model_loaded:
-            QtWidgets.QMessageBox.warning(self, "warning", "please load the OCR model first.")
+            QtWidgets.QMessageBox.warning(
+                self, "warning", "please load the OCR model first."
+            )
             return
         if not self.data.pil_image or not self.data.bubbles:
-            QtWidgets.QMessageBox.warning(self, "Warning", "No image or segmented bubbles found. Please go to Segment tab.")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Warning",
+                "No image or segmented bubbles found. Please go to Segment tab.",
+            )
             return
 
         self.scene.clear()
@@ -294,7 +302,7 @@ class OCRTab(QtWidgets.QWidget):
             for i, text in enumerate(texts):
                 valid_bubbles[i].text_ocr = text
 
-                item = QtWidgets.QListWidgetItem(f"{i+1}: {text}")
+                item = QtWidgets.QListWidgetItem(f"{i + 1}: {text}")
                 item.setData(QtCore.Qt.UserRole, valid_bubbles[i])
                 self.resultList.addItem(item)
 
@@ -321,8 +329,9 @@ class OCRTab(QtWidgets.QWidget):
         bubble = item.data(QtCore.Qt.UserRole)
         if bubble:
             x1, y1, x2, y2 = bubble.bbox
-            rect = QtCore.QRectF(x1, y1, x2-x1, y2-y1)
+            rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
             self.view.ensureVisible(rect)
+
 
 class MainApplication(QtWidgets.QWidget):
     def __init__(self):
