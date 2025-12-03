@@ -3,6 +3,7 @@ from ultralytics import YOLO
 from PySide6 import QtCore, QtWidgets, QtGui
 from PIL import Image
 from MangaOCRModel import MangaOCRModel
+from ElanMtJaEnTranslator import ElanMtJaEnTranslator
 
 
 class MessageDialog(QtWidgets.QDialog):
@@ -25,6 +26,8 @@ class MessageDialog(QtWidgets.QDialog):
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
+
+
 class Bubble:
     def __init__(self, polygon, bbox):
         self.polygon = polygon
@@ -38,6 +41,7 @@ class AppData:
         self.image_path = None
         self.pil_image = None
         self.bubbles = []
+        self.ocr_text = []
 
 
 class SegmentBubbleTab(QtWidgets.QWidget):
@@ -406,6 +410,182 @@ class OCRTab(QtWidgets.QWidget):
     def fitView(self):
         if self.data.image_path:
             self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+
+class TranslateTab(QtWidgets.QWidget):
+    def __init__(self, data_context):
+        super().__init__()
+        self.data = data_context
+
+        self.translator = ElanMtJaEnTranslator()
+        self.model_loaded = False
+
+        # --- graphics view --- #
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.view.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+
+        # --- controls --- #
+        self.modelSelector = QtWidgets.QComboBox()
+        self.modelSelector.addItems(["tiny", "base", "bt"])
+        self.modelSelector.setToolTip(
+            "Select model size: Tiny (fast), Base, BT (Better quality)"
+        )
+
+        self.loadModelButton = QtWidgets.QPushButton("Load translator")
+        self.runTranslateButton = QtWidgets.QPushButton("Run translation")
+        self.resultList = QtWidgets.QListWidget()
+
+        self.zoomInButton = QtWidgets.QPushButton("Zoom in (+)")
+        self.zoomOutButton = QtWidgets.QPushButton("Zoom out (-)")
+        self.fitButton = QtWidgets.QPushButton("Fit to space")
+
+        # --- layout --- #
+        self.layout = QtWidgets.QHBoxLayout(self)
+
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+
+        left_layout.addWidget(QtWidgets.QLabel("Model size:"))
+        left_layout.addWidget(self.modelSelector)
+        left_layout.addWidget(self.loadModelButton)
+        left_layout.addWidget(self.runTranslateButton)
+        left_layout.addWidget(QtWidgets.QLabel("Translation:"))
+        left_layout.addWidget(self.resultList)
+
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
+
+        right_layout.addWidget(self.view)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.addWidget(self.zoomInButton)
+        zoom_layout.addWidget(self.zoomOutButton)
+        zoom_layout.addWidget(self.fitButton)
+        zoom_layout.addStretch()
+        right_layout.addLayout(zoom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
+
+        # --- connection --- #
+        self.loadModelButton.clicked.connect(self.loadModel)
+        self.runTranslateButton.clicked.connect(self.runTranslation)
+        self.resultList.itemClicked.connect(self.highlightBubble)
+        self.zoomInButton.clicked.connect(self.zoomIn)
+        self.zoomOutButton.clicked.connect(self.zoomOut)
+        self.fitButton.clicked.connect(self.fitView)
+
+    @QtCore.Slot()
+    def loadModel(self):
+        selected_model = self.modelSelector.currentText()
+        try:
+            self.loadModelButton.setText("Loading...")
+            self.loadModelButton.setEnabled(False)
+            self.modelSelector.setEnabled(False)
+            QtWidgets.QApplication.processEvents()
+
+            self.translator.load_model(device="auto", elan_model=selected_model)
+            self.model_loaded = True
+
+            self.loadModelButton.setText(f"Loaded ({selected_model})")
+            QtWidgets.QMessageBox.information(
+                self, "Success", "Translator model loaded."
+            )
+        except Exception as e:
+            self.loadModelButton.setText("Load translator")
+            self.loadModelButton.setEnabled(True)
+            self.modelSelector.setEnabled(True)
+            MessageDialog("Error", f"Failed to load translator: {e}", self).exec()
+
+    @QtCore.Slot()
+    def runTranslation(self):
+        if not self.model_loaded:
+            QtWidgets.QMessageBox.warning(
+                self, "Warning", "Load the translator model first."
+            )
+            return
+
+        bubbles_to_translate = [b for b in self.data.bubbles if b.text_ocr]
+
+        if not bubbles_to_translate:
+            QtWidgets.QMessage.warning(
+                self, "Warning", "No OCR text found. Run OCR first."
+            )
+            return
+
+        source_texts = [b.text_ocr for b in bubbles_to_translate]
+
+        try:
+            translated_texts = self.translator.predict(source_texts)
+
+            self.resultList.clear()
+            self.scene.clear()
+
+            if self.data.image_path:
+                pixmap = QtGui.QPixmap(self.data.image_path)
+                self.scene.addPixmap(pixmap)
+                self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+                self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+                for i, bubble in enumerate(bubbles_to_translate):
+                    bubble.text_translated = translated_texts[i]
+
+                    list_text = (
+                        f"JP: {bubble.text_ocr}\nEN: {bubble.text_translated}\n---"
+                    )
+                    item = QtWidgets.QListWidgetItem(list_text)
+                    item.setData(QtCore.Qt.UserRole, bubble)
+                    self.resultList.addItem(item)
+
+                    x1, y1, x2, y2 = bubble.bbox
+                    rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
+
+                    rect_item = QtWidgets.QGraphicsRectItem(rect)
+                    rect_item.setPen(QtGui.QPen(QtCore.Qt.green, 2))
+                    self.scene.addItem(rect_item)
+
+                    text_item = QtWidgets.QGraphicsTextItem(bubble.text_translated)
+                    text_item.setDefaultTextColor(QtCore.Qt.green)
+                    text_item.setPos(x1, y1)
+                    text_item.setScale(1.5)
+                    text_item.setZValue(1)
+                    self.scene.addItem(text_item)
+
+        except Exception as e:
+            MessageDialog("Error", f"Translation failed: {e}", self).exec()
+
+    @QtCore.Slot()
+    def highlightBubble(self, item):
+        bubble = item.data(QtCore.Qt.UserRole)
+        if bubble:
+            x1, y1, x2, y2 = bubble.bbox
+            rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
+            self.view.ensureVisible(rect)
+
+    @QtCore.Slot()
+    def zoomIn(self):
+        self.view.scale(1.2, 1.2)
+
+    @QtCore.Slot()
+    def zoomOut(self):
+        self.view.scale(0.8, 0.8)
+
+    @QtCore.Slot()
+    def fitView(self):
+        if self.data.image_path:
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+
 class MainApplication(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -427,8 +607,7 @@ class MainApplication(QtWidgets.QWidget):
         self.ocr_tab = OCRTab(self.app_data)
         self.tabs.addTab(self.ocr_tab, "OCR")
 
-        self.translate_tab = QtWidgets.QLabel("Translate")
-        self.translate_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.translate_tab = TranslateTab(self.app_data)
         self.tabs.addTab(self.translate_tab, "Translate")
 
         self.edit_tab = QtWidgets.QLabel("Edit")
