@@ -61,6 +61,9 @@
                     manga-ocr
                     pyside6
                     ultralytics
+                    accelerate
+                    sentencepiece
+                    sacremoses
                   '';
                 };
 
