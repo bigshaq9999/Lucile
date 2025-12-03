@@ -5,6 +5,26 @@ from PIL import Image
 from MangaOCRModel import MangaOCRModel
 
 
+class MessageDialog(QtWidgets.QDialog):
+    def __init__(self, title, message, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(600, 400)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        text_edit = QtWidgets.QTextEdit()
+        text_edit.setPlainText(str(message))
+        text_edit.setReadOnly(True)
+        font = QtGui.QFont("Courier New")
+        font.setStyleHint(QtGui.QFont.Monospace)
+        text_edit.setFont(font)
+
+        layout.addWidget(text_edit)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
 class Bubble:
     def __init__(self, polygon, bbox):
         self.polygon = polygon
@@ -146,9 +166,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 print(f"Model loaded successfully from {file_path}")
                 QtWidgets.QMessageBox.information(self, "Success", "Model Loaded.")
             except Exception as e:
-                QtWidgets.QMessageBox.critical(
-                    self, "Error", f"Could not load model: {e}"
-                )
+                MessageDialog("Error", f"Could not load model: {e}", self).exec()
 
     @QtCore.Slot()
     def runInference(self):
@@ -197,7 +215,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
         except Exception as e:
             print(f"Inference Error: {e}")
-            QtWidgets.QMessageBox.critical(self, "Error", f"Inference failed: \n{e}")
+            MessageDialog("Error", f"Inference failed: \n{e}", self).exec()
 
     @QtCore.Slot()
     def deleteSelectedBubble(self):
@@ -305,9 +323,7 @@ class OCRTab(QtWidgets.QWidget):
         except Exception as e:
             self.loadModelButton.setText("Load OCR model")
             self.loadModelButton.setEnabled(True)
-            QtWidgets.QMessageBox.critical(
-                self, "Error", f"Failed to load OCR model: {e}"
-            )
+            MessageDialog("Error", f"Failed to load OCR model: {e}", self).exec()
 
     @QtCore.Slot()
     def runOCR(self):
@@ -368,7 +384,7 @@ class OCRTab(QtWidgets.QWidget):
                 self.scene.addItem(text_item)
 
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Error", f"OCR Failed: {e}")
+            MessageDialog("Error", f"OCR Failed: {e}", self).exec()
 
     @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
