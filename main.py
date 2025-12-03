@@ -249,6 +249,7 @@ class OCRTab(QtWidgets.QWidget):
     def __init__(self, data_context):
         super().__init__()
         self.data = data_context
+        self.selected_bubble = None
 
         self.ocr_model = MangaOCRModel()
         self.model_loaded = False
@@ -257,6 +258,10 @@ class OCRTab(QtWidgets.QWidget):
         self.loadModelButton = QtWidgets.QPushButton("Load OCR Model")
         self.runOCRButton = QtWidgets.QPushButton("Run OCR")
         self.resultList = QtWidgets.QListWidget()
+
+        # --- edit text --- #
+        self.textEditor = QtWidgets.QTextEdit()
+        self.textEditor.setPlaceholderText("Select a bubble to edit text.")
 
         self.zoomInButton = QtWidgets.QPushButton("Zoom In (+)")
         self.zoomOutButton = QtWidgets.QPushButton("Zoom Out (-)")
@@ -271,8 +276,10 @@ class OCRTab(QtWidgets.QWidget):
 
         left_layout.addWidget(self.loadModelButton)
         left_layout.addWidget(self.runOCRButton)
-        left_layout.addWidget(QtWidgets.QLabel("Detected Text:"))
-        left_layout.addWidget(self.resultList)
+        left_layout.addWidget(QtWidgets.QLabel("Bubbles:"))
+        left_layout.addWidget(self.resultList, 1)
+        left_layout.addWidget(QtWidgets.QLabel("Edit text:"))
+        left_layout.addWidget(self.textEditor, 1)
 
         self.scene = QtWidgets.QGraphicsScene(self)
         self.view = QtWidgets.QGraphicsView(self.scene)
@@ -308,6 +315,7 @@ class OCRTab(QtWidgets.QWidget):
         self.loadModelButton.clicked.connect(self.loadModel)
         self.runOCRButton.clicked.connect(self.runOCR)
         self.resultList.itemClicked.connect(self.highlightBubble)
+        self.textEditor.textChanged.connect(self.updateBubbleText)
         self.zoomInButton.clicked.connect(self.zoomIn)
         self.zoomOutButton.clicked.connect(self.zoomOut)
         self.fitButton.clicked.connect(self.fitView)
@@ -368,7 +376,8 @@ class OCRTab(QtWidgets.QWidget):
             for i, text in enumerate(texts):
                 valid_bubbles[i].text_ocr = text
 
-                item = QtWidgets.QListWidgetItem(f"{i + 1}: {text}")
+                preview = text[:20] + "..." if len(text) > 20 else text
+                item = QtWidgets.QListWidgetItem(f"{i + 1}: {preview}")
                 item.setData(QtCore.Qt.UserRole, valid_bubbles[i])
                 self.resultList.addItem(item)
 
@@ -387,16 +396,36 @@ class OCRTab(QtWidgets.QWidget):
                 text_item.setScale(1.5)
                 self.scene.addItem(text_item)
 
+                valid_bubbles[i].graphics_item = text_item
+
         except Exception as e:
             MessageDialog("Error", f"OCR Failed: {e}", self).exec()
 
     @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
+        self.selected_bubble = bubble
+
         if bubble:
+            self.textEditor.blockSignals(True)
+            self.textEditor.setPlainText(bubble.text_ocr)
+            self.textEditor.blockSignals(False)
+
             x1, y1, x2, y2 = bubble.bbox
             rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
             self.view.ensureVisible(rect)
+
+    @QtCore.Slot()
+    def updateBubbleText(self):
+        if self.selected_bubble:
+            new_text = self.textEditor.toPlainText()
+            self.selected_bubble.text_ocr = new_text
+
+            if (
+                hasattr(self.selected_bubble, "graphics_item")
+                and self.selected_bubble.graphics_item
+            ):
+                self.selected_bubble.graphics_item.setPlainText(new_text)
 
     @QtCore.Slot()
     def zoomIn(self):
@@ -416,6 +445,7 @@ class TranslateTab(QtWidgets.QWidget):
     def __init__(self, data_context):
         super().__init__()
         self.data = data_context
+        self.selected_bubble = None
 
         self.translator = ElanMtJaEnTranslator()
         self.model_loaded = False
@@ -437,6 +467,15 @@ class TranslateTab(QtWidgets.QWidget):
         self.runTranslateButton = QtWidgets.QPushButton("Run translation")
         self.resultList = QtWidgets.QListWidget()
 
+        # --- editor --- #
+        self.originalTextEdit = QtWidgets.QTextEdit()
+        self.originalTextEdit.setReadOnly(True)
+
+        self.originalTextEdit.setMaximumHeight(100)
+
+        self.transalatedTextEdit = QtWidgets.QTextEdit()
+        self.transalatedTextEdit.setPlaceholderText("Edit translation here...")
+
         self.zoomInButton = QtWidgets.QPushButton("Zoom in (+)")
         self.zoomOutButton = QtWidgets.QPushButton("Zoom out (-)")
         self.fitButton = QtWidgets.QPushButton("Fit to space")
@@ -452,8 +491,15 @@ class TranslateTab(QtWidgets.QWidget):
         left_layout.addWidget(self.modelSelector)
         left_layout.addWidget(self.loadModelButton)
         left_layout.addWidget(self.runTranslateButton)
-        left_layout.addWidget(QtWidgets.QLabel("Translation:"))
-        left_layout.addWidget(self.resultList)
+
+        left_layout.addWidget(QtWidgets.QLabel("Select bubble:"))
+        left_layout.addWidget(self.resultList, 1)
+
+        left_layout.addWidget(QtWidgets.QLabel("Original (JP):"))
+        left_layout.addWidget(self.originalTextEdit)
+
+        left_layout.addWidget(QtWidgets.QLabel("Translation (EN):"))
+        left_layout.addWidget(self.transalatedTextEdit, 1)
 
         # --- right --- #
         right_widget = QtWidgets.QWidget()
@@ -481,6 +527,7 @@ class TranslateTab(QtWidgets.QWidget):
         self.loadModelButton.clicked.connect(self.loadModel)
         self.runTranslateButton.clicked.connect(self.runTranslation)
         self.resultList.itemClicked.connect(self.highlightBubble)
+        self.transalatedTextEdit.textChanged.connect(self.updateTranslation)
         self.zoomInButton.clicked.connect(self.zoomIn)
         self.zoomOutButton.clicked.connect(self.zoomOut)
         self.fitButton.clicked.connect(self.fitView)
@@ -540,10 +587,7 @@ class TranslateTab(QtWidgets.QWidget):
                 for i, bubble in enumerate(bubbles_to_translate):
                     bubble.text_translated = translated_texts[i]
 
-                    list_text = (
-                        f"JP: {bubble.text_ocr}\nEN: {bubble.text_translated}\n---"
-                    )
-                    item = QtWidgets.QListWidgetItem(list_text)
+                    item = QtWidgets.QListWidgetItem(f"Bubble {i + 1}")
                     item.setData(QtCore.Qt.UserRole, bubble)
                     self.resultList.addItem(item)
 
@@ -561,16 +605,37 @@ class TranslateTab(QtWidgets.QWidget):
                     text_item.setZValue(1)
                     self.scene.addItem(text_item)
 
+                    bubble.graphics_item_en = text_item
+
         except Exception as e:
             MessageDialog("Error", f"Translation failed: {e}", self).exec()
 
     @QtCore.Slot()
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
+
         if bubble:
+            self.originalTextEdit.setText(bubble.text_ocr)
+
+            self.transalatedTextEdit.blockSignals(True)
+            self.transalatedTextEdit.setText(bubble.text_translated)
+            self.transalatedTextEdit.blockSignals(False)
+
             x1, y1, x2, y2 = bubble.bbox
             rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
             self.view.ensureVisible(rect)
+
+    @QtCore.Slot()
+    def updateTranslation(self):
+        if self.selected_bubble:
+            new_text = self.transalatedTextEdit.toPlainText()
+            self.selected_bubble.text_translated = new_text
+
+            if (
+                hasattr(self.selected_bubble, "graphics_item_en")
+                and self.selected_bubble.graphics_item_en
+            ):
+                self.selected_bubble.graphics_item_en.setPlainText(new_text)
 
     @QtCore.Slot()
     def zoomIn(self):
