@@ -60,31 +60,46 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.confidenceSlider.setTickInterval(10)
 
         # --- layout --- #
-        self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout = QtWidgets.QHBoxLayout(self)
 
-        top_layout = QtWidgets.QHBoxLayout()
-        top_layout.addWidget(self.selectModelButton)
-        top_layout.addWidget(self.openImageButton)
-        self.layout.addLayout(top_layout)
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
 
-        inf_layout = QtWidgets.QHBoxLayout()
-        inf_layout.addWidget(self.confidenceLabel)
-        inf_layout.addWidget(self.confidenceSlider)
-        inf_layout.addWidget(self.runInferenceButton)
-        self.layout.addLayout(inf_layout)
+        left_layout.addWidget(self.selectModelButton)
+        left_layout.addWidget(self.openImageButton)
+        left_layout.addWidget(self.imageList)
 
-        zoom_layout = QtWidgets.QHBoxLayout()
-        zoom_layout.addWidget(self.zoomInButton)
-        zoom_layout.addWidget(self.zoomOutButton)
-        zoom_layout.addWidget(self.fitButton)
-        self.layout.addLayout(zoom_layout)
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
 
-        self.layout.addWidget(self.view)
+        inference_layout = QtWidgets.QHBoxLayout()
+        inference_layout.addWidget(self.confidenceLabel)
+        inference_layout.addWidget(self.confidenceSlider)
+        inference_layout.addWidget(self.runInferenceButton)
+        right_layout.addLayout(inference_layout)
 
-        edit_layout = QtWidgets.QHBoxLayout()
-        edit_layout.addStretch()
-        edit_layout.addWidget(self.deleteButton)
-        self.layout.addLayout(edit_layout)
+        right_layout.addWidget(self.view)
+
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.addWidget(self.zoomInButton)
+        bottom_layout.addWidget(self.zoomOutButton)
+        bottom_layout.addWidget(self.fitButton)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.deleteButton)
+        right_layout.addLayout(bottom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
 
         # --- signal and slot connection --- #
         self.selectModelButton.clicked.connect(self.selectModel)
@@ -212,17 +227,25 @@ class OCRTab(QtWidgets.QWidget):
     def __init__(self, data_context):
         super().__init__()
         self.data = data_context
+
         self.ocr_model = MangaOCRModel()
         self.model_loaded = False
 
-        self.layout = QtWidgets.QHBoxLayout(self)
-
-        left_widget = QtWidgets.QWidget()
-        left_layout = QtWidgets.QVBoxLayout(left_widget)
-
+        # --- buttons --- #
         self.loadModelButton = QtWidgets.QPushButton("Load OCR Model")
         self.runOCRButton = QtWidgets.QPushButton("Run OCR")
         self.resultList = QtWidgets.QListWidget()
+
+        self.zoomInButton = QtWidgets.QPushButton("Zoom In (+)")
+        self.zoomOutButton = QtWidgets.QPushButton("Zoom Out (-)")
+        self.fitButton = QtWidgets.QPushButton("Fit to space")
+
+        # --- layout --- #
+        self.layout = QtWidgets.QHBoxLayout(self)
+
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
 
         left_layout.addWidget(self.loadModelButton)
         left_layout.addWidget(self.runOCRButton)
@@ -233,12 +256,39 @@ class OCRTab(QtWidgets.QWidget):
         self.view = QtWidgets.QGraphicsView(self.scene)
         self.view.setRenderHint(QtGui.QPainter.Antialiasing)
 
-        self.layout.addWidget(left_widget, 1)
-        self.layout.addWidget(self.view, 2)
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
 
+        right_layout.addWidget(self.view)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.addWidget(self.zoomInButton)
+        zoom_layout.addWidget(self.zoomOutButton)
+        zoom_layout.addWidget(self.fitButton)
+        zoom_layout.addStretch()
+        # TODO: change this to edit button
+        # zoom_layout.addWidget(self.deleteButton)
+        right_layout.addLayout(zoom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
+
+        # --- signal and slot connection --- #
         self.loadModelButton.clicked.connect(self.loadModel)
         self.runOCRButton.clicked.connect(self.runOCR)
         self.resultList.itemClicked.connect(self.highlightBubble)
+        self.zoomInButton.clicked.connect(self.zoomIn)
+        self.zoomOutButton.clicked.connect(self.zoomOut)
+        self.fitButton.clicked.connect(self.fitView)
 
     @QtCore.Slot()
     def loadModel(self):
@@ -328,7 +378,18 @@ class OCRTab(QtWidgets.QWidget):
             rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
             self.view.ensureVisible(rect)
 
+    @QtCore.Slot()
+    def zoomIn(self):
+        self.view.scale(1.2, 1.2)
 
+    @QtCore.Slot()
+    def zoomOut(self):
+        self.view.scale(0.8, 0.8)
+
+    @QtCore.Slot()
+    def fitView(self):
+        if self.data.image_path:
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
 class MainApplication(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
