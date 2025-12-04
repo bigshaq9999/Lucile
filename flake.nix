@@ -7,8 +7,6 @@
       imports = [ inputs.devenv.flakeModule ];
       systems = [
         "x86_64-linux"
-        "aarch64-linux"
-        "aarch64-darwin"
       ];
 
       perSystem =
@@ -58,8 +56,6 @@
                     mypy
                     pylint
 
-                    pyside6
-                    ultralytics
                     manga-ocr
                   '';
                 };
@@ -85,31 +81,13 @@
               };
 
             packages = builtins.attrValues {
-              inherit (pkgs) stdenv zstd libxcb-cursor;
-              inherit (pkgs)
-                zlib
-                pylint
-                glib
-                libGL
-                libxkbcommon
-                fontconfig
-                freetype
-                dbus
-                ;
-              inherit (pkgs.xorg) libX11;
               inherit (pkgs.python312Packages)
-                pyqt6
                 pyside6
                 ultralytics
-                # manga-ocr
                 ;
               inherit (pkgs) git pre-commit;
               inherit (pkgs) nix-index nix-prefetch-github nix-prefetch-scripts;
             };
-
-            enterShell = ''
-              # export LD_LIBRARY_PATH=${pkgs.libGL}/lib/:${pkgs.libxkbcommon}/lib/:${pkgs.fontconfig.lib}/lib/:${pkgs.xorg.libX11.out}/lib/:${pkgs.glib.out}/lib/:${pkgs.libz.out}/lib/:${pkgs.freetype.out}/lib/:${pkgs.zstd.out}/lib/:${pkgs.dbus.lib}/lib/:${pkgs.libxcb-cursor}/lib/:$LD_LIBRARY_PATH
-            '';
           };
           formatter = pkgs.nixfmt-rfc-style;
         };
