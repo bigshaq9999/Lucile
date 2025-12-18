@@ -44,7 +44,6 @@ class AppData:
         self.image_path = None
         self.pil_image = None
         self.bubbles = []
-        self.ocr_text = []
 
 
 class SegmentBubbleTab(QtWidgets.QWidget):
@@ -53,7 +52,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     Load Image, Select Model, Run Inference
     """
 
-    def __init__(self, data_context):
+    def __init__(self, data_context: AppData):
         super().__init__()
         self.data = data_context
 
@@ -160,7 +159,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             pixmap = QtGui.QPixmap(file_path)
             self.pixmap_item = self.scene.addPixmap(pixmap)
             self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
-            self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
 
     @QtCore.Slot()
     def selectModel(self):
@@ -246,11 +245,11 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     @QtCore.Slot()
     def fitView(self):
         if self.pixmap_item:
-            self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
 
 
 class OCRTab(QtWidgets.QWidget):
-    def __init__(self, data_context):
+    def __init__(self, data_context: AppData):
         super().__init__()
         self.data = data_context
         self.selected_bubble = None
@@ -416,7 +415,9 @@ class OCRTab(QtWidgets.QWidget):
             self.textEditor.blockSignals(False)
 
             x1, y1, x2, y2 = bubble.bbox
-            rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
+            w = x2 - x1
+            h = y2 - y1
+            rect = QtCore.QRectF(x1, y1, w, h)
             self.view.ensureVisible(rect)
 
     @QtCore.Slot()
@@ -446,7 +447,7 @@ class OCRTab(QtWidgets.QWidget):
 
 
 class TranslateTab(QtWidgets.QWidget):
-    def __init__(self, data_context):
+    def __init__(self, data_context: AppData):
         super().__init__()
         self.data = data_context
         self.selected_bubble = None
@@ -596,7 +597,9 @@ class TranslateTab(QtWidgets.QWidget):
                     self.resultList.addItem(item)
 
                     x1, y1, x2, y2 = bubble.bbox
-                    rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
+                    w = x2 - x1
+                    h = y2 - y1
+                    rect = QtCore.QRectF(x1, y1, w, h)
 
                     rect_item = QtWidgets.QGraphicsRectItem(rect)
                     rect_item.setPen(QtGui.QPen(QtCore.Qt.green, 2))
@@ -617,6 +620,7 @@ class TranslateTab(QtWidgets.QWidget):
     @QtCore.Slot()
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
+        self.selected_bubble = bubble
 
         if bubble:
             self.originalTextEdit.setText(bubble.text_ocr)
@@ -626,7 +630,9 @@ class TranslateTab(QtWidgets.QWidget):
             self.transalatedTextEdit.blockSignals(False)
 
             x1, y1, x2, y2 = bubble.bbox
-            rect = QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
+            w = x2 - x1
+            h = y2 - y1
+            rect = QtCore.QRectF(x1, y1, w, h)
             self.view.ensureVisible(rect)
 
     @QtCore.Slot()
@@ -656,7 +662,7 @@ class TranslateTab(QtWidgets.QWidget):
 
 
 class ReplaceTab(QtWidgets.QWidget):
-    def __init__(self, data_context):
+    def __init__(self, data_context: AppData):
         super().__init__()
         self.data = data_context
         self.typesetter = MangaTypesetter()
