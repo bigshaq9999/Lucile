@@ -27,7 +27,7 @@ jobs:
       - name: install deps
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu pyside6 ultralytics pyinstaller 
+          pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu pyside6 ultralytics pyinstaller manga_ocr
 
       - name: build with pyinstaller
         run: |

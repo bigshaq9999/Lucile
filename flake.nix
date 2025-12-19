@@ -57,6 +57,9 @@
                     pylint
 
                     manga-ocr
+                    accelerate
+                    sentencepiece
+                    sacremoses
                   '';
                 };
 

@@ -1,12 +1,34 @@
-import os
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
 import sys
-import cv2
 from ultralytics import YOLO
 from PySide6 import QtCore, QtWidgets, QtGui
 from PIL import Image
 from MangaOCRModel import MangaOCRModel
+from ElanMtJaEnTranslator import ElanMtJaEnTranslator
+from MangaTypesetter import MangaTypesetter
+import cv2
+import numpy as np
+
+
+class MessageDialog(QtWidgets.QDialog):
+    def __init__(self, title, message, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(600, 400)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        text_edit = QtWidgets.QTextEdit()
+        text_edit.setPlainText(str(message))
+        text_edit.setReadOnly(True)
+        font = QtGui.QFont("Courier New")
+        font.setStyleHint(QtGui.QFont.Monospace)
+        text_edit.setFont(font)
+
+        layout.addWidget(text_edit)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok)
+        buttons.accepted.connect(self.accept)
+        layout.addWidget(buttons)
 
 
 class Bubble:
@@ -21,7 +43,7 @@ class AppData:
     def __init__(self):
         self.image_path = None
         self.pil_image = None
-        self.bubbles = []   
+        self.bubbles = []
 
 
 class SegmentBubbleTab(QtWidgets.QWidget):
@@ -30,7 +52,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     Load Image, Select Model, Run Inference
     """
 
-    def __init__(self, data_context):
+    def __init__(self, data_context: AppData):
         super().__init__()
         self.data = data_context
 
@@ -47,6 +69,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.openImageButton = QtWidgets.QPushButton("Open Image")
         self.selectModelButton = QtWidgets.QPushButton("Select Model")
         self.runInferenceButton = QtWidgets.QPushButton("Run Inference")
+        self.imageList = QtWidgets.QListWidget()
 
         self.deleteButton = QtWidgets.QPushButton("Delete Selected Bubble")
         self.deleteButton.setShortcut(QtGui.QKeySequence.Delete)
@@ -64,31 +87,46 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.confidenceSlider.setTickInterval(10)
 
         # --- layout --- #
-        self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout = QtWidgets.QHBoxLayout(self)
 
-        top_layout = QtWidgets.QHBoxLayout()
-        top_layout.addWidget(self.selectModelButton)
-        top_layout.addWidget(self.openImageButton)
-        self.layout.addLayout(top_layout)
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
 
-        inf_layout = QtWidgets.QHBoxLayout()
-        inf_layout.addWidget(self.confidenceLabel)
-        inf_layout.addWidget(self.confidenceSlider)
-        inf_layout.addWidget(self.runInferenceButton)
-        self.layout.addLayout(inf_layout)
+        left_layout.addWidget(self.selectModelButton)
+        left_layout.addWidget(self.openImageButton)
+        left_layout.addWidget(self.imageList)
 
-        zoom_layout = QtWidgets.QHBoxLayout()
-        zoom_layout.addWidget(self.zoomInButton)
-        zoom_layout.addWidget(self.zoomOutButton)
-        zoom_layout.addWidget(self.fitButton)
-        self.layout.addLayout(zoom_layout)
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
 
-        self.layout.addWidget(self.view)
+        inference_layout = QtWidgets.QHBoxLayout()
+        inference_layout.addWidget(self.confidenceLabel)
+        inference_layout.addWidget(self.confidenceSlider)
+        inference_layout.addWidget(self.runInferenceButton)
+        right_layout.addLayout(inference_layout)
 
-        edit_layout = QtWidgets.QHBoxLayout()
-        edit_layout.addStretch()
-        edit_layout.addWidget(self.deleteButton)
-        self.layout.addLayout(edit_layout)
+        right_layout.addWidget(self.view)
+
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.addWidget(self.zoomInButton)
+        bottom_layout.addWidget(self.zoomOutButton)
+        bottom_layout.addWidget(self.fitButton)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(self.deleteButton)
+        right_layout.addLayout(bottom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
 
         # --- signal and slot connection --- #
         self.selectModelButton.clicked.connect(self.selectModel)
@@ -121,7 +159,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             pixmap = QtGui.QPixmap(file_path)
             self.pixmap_item = self.scene.addPixmap(pixmap)
             self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
-            self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
 
     @QtCore.Slot()
     def selectModel(self):
@@ -135,9 +173,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 print(f"Model loaded successfully from {file_path}")
                 QtWidgets.QMessageBox.information(self, "Success", "Model Loaded.")
             except Exception as e:
-                QtWidgets.QMessageBox.critical(
-                    self, "Error", f"Could not load model: {e}"
-                )
+                MessageDialog("Error", f"Could not load model: {e}", self).exec()
 
     @QtCore.Slot()
     def runInference(self):
@@ -151,7 +187,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
             conf_val = self.confidenceSlider.value() / 100.0
 
-            results = self.model(self.image_path, conf=conf_val, workers=0)
+            results = self.model(self.image_path, conf=conf_val)
             result = results[0]
 
             if result.masks is None:
@@ -168,7 +204,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
                 bubble = Bubble(polygon, box.tolist())
                 self.data.bubbles.append(bubble)
-                
+
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
 
                 pen = QtGui.QPen(QtCore.Qt.red)
@@ -179,14 +215,14 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
 
                 poly_item.setData(0, bubble)
-                
+
                 self.scene.addItem(poly_item)
 
             print(f"Found {len(result.masks.xy)} segmented bubbles")
 
         except Exception as e:
             print(f"Inference Error: {e}")
-            QtWidgets.QMessageBox.critical(self, "Error", f"Inference failed: \n{e}")
+            MessageDialog("Error", f"Inference failed: \n{e}", self).exec()
 
     @QtCore.Slot()
     def deleteSelectedBubble(self):
@@ -209,40 +245,83 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     @QtCore.Slot()
     def fitView(self):
         if self.pixmap_item:
-            self.view.fitInView(self.pixmap_item, QtCore.Qt.KeepAspectRatio)
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
 
 
 class OCRTab(QtWidgets.QWidget):
-    def __init__(self, data_context):
+    def __init__(self, data_context: AppData):
         super().__init__()
         self.data = data_context
+        self.selected_bubble = None
+
         self.ocr_model = MangaOCRModel()
         self.model_loaded = False
 
-        self.layout = QtWidgets.QHBoxLayout(self)
-
-        left_widget = QtWidgets.QWidget()
-        left_layout = QtWidgets.QVBoxLayout(left_widget)
-
+        # --- buttons --- #
         self.loadModelButton = QtWidgets.QPushButton("Load OCR Model")
         self.runOCRButton = QtWidgets.QPushButton("Run OCR")
         self.resultList = QtWidgets.QListWidget()
 
+        # --- edit text --- #
+        self.textEditor = QtWidgets.QTextEdit()
+        self.textEditor.setPlaceholderText("Select a bubble to edit text.")
+
+        self.zoomInButton = QtWidgets.QPushButton("Zoom In (+)")
+        self.zoomOutButton = QtWidgets.QPushButton("Zoom Out (-)")
+        self.fitButton = QtWidgets.QPushButton("Fit to space")
+
+        # --- layout --- #
+        self.layout = QtWidgets.QHBoxLayout(self)
+
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+
         left_layout.addWidget(self.loadModelButton)
         left_layout.addWidget(self.runOCRButton)
-        left_layout.addWidget(QtWidgets.QLabel("Detected Text:"))
-        left_layout.addWidget(self.resultList)
+        left_layout.addWidget(QtWidgets.QLabel("Bubbles:"))
+        left_layout.addWidget(self.resultList, 1)
+        left_layout.addWidget(QtWidgets.QLabel("Edit text:"))
+        left_layout.addWidget(self.textEditor, 1)
 
         self.scene = QtWidgets.QGraphicsScene(self)
         self.view = QtWidgets.QGraphicsView(self.scene)
         self.view.setRenderHint(QtGui.QPainter.Antialiasing)
 
-        self.layout.addWidget(left_widget, 1)
-        self.layout.addWidget(self.view, 2)
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
 
+        right_layout.addWidget(self.view)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.addWidget(self.zoomInButton)
+        zoom_layout.addWidget(self.zoomOutButton)
+        zoom_layout.addWidget(self.fitButton)
+        zoom_layout.addStretch()
+        # TODO: change this to edit button
+        # zoom_layout.addWidget(self.deleteButton)
+        right_layout.addLayout(zoom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
+
+        # --- signal and slot connection --- #
         self.loadModelButton.clicked.connect(self.loadModel)
         self.runOCRButton.clicked.connect(self.runOCR)
         self.resultList.itemClicked.connect(self.highlightBubble)
+        self.textEditor.textChanged.connect(self.updateBubbleText)
+        self.zoomInButton.clicked.connect(self.zoomIn)
+        self.zoomOutButton.clicked.connect(self.zoomOut)
+        self.fitButton.clicked.connect(self.fitView)
 
     @QtCore.Slot()
     def loadModel(self):
@@ -259,15 +338,21 @@ class OCRTab(QtWidgets.QWidget):
         except Exception as e:
             self.loadModelButton.setText("Load OCR model")
             self.loadModelButton.setEnabled(True)
-            QtWidgets.QMessageBox.critical(self, "Error", f"Failed to load OCR model: {e}")
+            MessageDialog("Error", f"Failed to load OCR model: {e}", self).exec()
 
     @QtCore.Slot()
     def runOCR(self):
         if not self.model_loaded:
-            QtWidgets.QMessageBox.warning(self, "warning", "please load the OCR model first.")
+            QtWidgets.QMessageBox.warning(
+                self, "warning", "please load the OCR model first."
+            )
             return
         if not self.data.pil_image or not self.data.bubbles:
-            QtWidgets.QMessageBox.warning(self, "Warning", "No image or segmented bubbles found. Please go to Segment tab.")
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Warning",
+                "No image or segmented bubbles found. Please go to Segment tab.",
+            )
             return
 
         self.scene.clear()
@@ -294,7 +379,8 @@ class OCRTab(QtWidgets.QWidget):
             for i, text in enumerate(texts):
                 valid_bubbles[i].text_ocr = text
 
-                item = QtWidgets.QListWidgetItem(f"{i+1}: {text}")
+                preview = text[:20] + "..." if len(text) > 20 else text
+                item = QtWidgets.QListWidgetItem(f"{i + 1}: {preview}")
                 item.setData(QtCore.Qt.UserRole, valid_bubbles[i])
                 self.resultList.addItem(item)
 
@@ -313,16 +399,434 @@ class OCRTab(QtWidgets.QWidget):
                 text_item.setScale(1.5)
                 self.scene.addItem(text_item)
 
+                valid_bubbles[i].graphics_item = text_item
+
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Error", f"OCR Failed: {e}")
+            MessageDialog("Error", f"OCR Failed: {e}", self).exec()
 
     @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
+        self.selected_bubble = bubble
+
         if bubble:
+            self.textEditor.blockSignals(True)
+            self.textEditor.setPlainText(bubble.text_ocr)
+            self.textEditor.blockSignals(False)
+
             x1, y1, x2, y2 = bubble.bbox
-            rect = QtCore.QRectF(x1, y1, x2-x1, y2-y1)
+            w = x2 - x1
+            h = y2 - y1
+            rect = QtCore.QRectF(x1, y1, w, h)
             self.view.ensureVisible(rect)
+
+    @QtCore.Slot()
+    def updateBubbleText(self):
+        if self.selected_bubble:
+            new_text = self.textEditor.toPlainText()
+            self.selected_bubble.text_ocr = new_text
+
+            if (
+                hasattr(self.selected_bubble, "graphics_item")
+                and self.selected_bubble.graphics_item
+            ):
+                self.selected_bubble.graphics_item.setPlainText(new_text)
+
+    @QtCore.Slot()
+    def zoomIn(self):
+        self.view.scale(1.2, 1.2)
+
+    @QtCore.Slot()
+    def zoomOut(self):
+        self.view.scale(0.8, 0.8)
+
+    @QtCore.Slot()
+    def fitView(self):
+        if self.data.image_path:
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+
+class TranslateTab(QtWidgets.QWidget):
+    def __init__(self, data_context: AppData):
+        super().__init__()
+        self.data = data_context
+        self.selected_bubble = None
+
+        self.translator = ElanMtJaEnTranslator()
+        self.model_loaded = False
+
+        # --- graphics view --- #
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.view.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+
+        # --- controls --- #
+        self.modelSelector = QtWidgets.QComboBox()
+        self.modelSelector.addItems(["tiny", "base", "bt"])
+        self.modelSelector.setToolTip(
+            "Select model size: Tiny (fast), Base, BT (Better quality)"
+        )
+
+        self.loadModelButton = QtWidgets.QPushButton("Load translator")
+        self.runTranslateButton = QtWidgets.QPushButton("Run translation")
+        self.resultList = QtWidgets.QListWidget()
+
+        # --- editor --- #
+        self.originalTextEdit = QtWidgets.QTextEdit()
+        self.originalTextEdit.setReadOnly(True)
+
+        self.originalTextEdit.setMaximumHeight(100)
+
+        self.transalatedTextEdit = QtWidgets.QTextEdit()
+        self.transalatedTextEdit.setPlaceholderText("Edit translation here...")
+
+        self.zoomInButton = QtWidgets.QPushButton("Zoom in (+)")
+        self.zoomOutButton = QtWidgets.QPushButton("Zoom out (-)")
+        self.fitButton = QtWidgets.QPushButton("Fit to space")
+
+        # --- layout --- #
+        self.layout = QtWidgets.QHBoxLayout(self)
+
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+
+        left_layout.addWidget(QtWidgets.QLabel("Model size:"))
+        left_layout.addWidget(self.modelSelector)
+        left_layout.addWidget(self.loadModelButton)
+        left_layout.addWidget(self.runTranslateButton)
+
+        left_layout.addWidget(QtWidgets.QLabel("Select bubble:"))
+        left_layout.addWidget(self.resultList, 1)
+
+        left_layout.addWidget(QtWidgets.QLabel("Original (JP):"))
+        left_layout.addWidget(self.originalTextEdit)
+
+        left_layout.addWidget(QtWidgets.QLabel("Translation (EN):"))
+        left_layout.addWidget(self.transalatedTextEdit, 1)
+
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
+
+        right_layout.addWidget(self.view)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.addWidget(self.zoomInButton)
+        zoom_layout.addWidget(self.zoomOutButton)
+        zoom_layout.addWidget(self.fitButton)
+        zoom_layout.addStretch()
+        right_layout.addLayout(zoom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
+
+        # --- connection --- #
+        self.loadModelButton.clicked.connect(self.loadModel)
+        self.runTranslateButton.clicked.connect(self.runTranslation)
+        self.resultList.itemClicked.connect(self.highlightBubble)
+        self.transalatedTextEdit.textChanged.connect(self.updateTranslation)
+        self.zoomInButton.clicked.connect(self.zoomIn)
+        self.zoomOutButton.clicked.connect(self.zoomOut)
+        self.fitButton.clicked.connect(self.fitView)
+
+    @QtCore.Slot()
+    def loadModel(self):
+        selected_model = self.modelSelector.currentText()
+        try:
+            self.loadModelButton.setText("Loading...")
+            self.loadModelButton.setEnabled(False)
+            self.modelSelector.setEnabled(False)
+            QtWidgets.QApplication.processEvents()
+
+            self.translator.load_model(device="auto", elan_model=selected_model)
+            self.model_loaded = True
+
+            self.loadModelButton.setText(f"Loaded ({selected_model})")
+            QtWidgets.QMessageBox.information(
+                self, "Success", "Translator model loaded."
+            )
+        except Exception as e:
+            self.loadModelButton.setText("Load translator")
+            self.loadModelButton.setEnabled(True)
+            self.modelSelector.setEnabled(True)
+            MessageDialog("Error", f"Failed to load translator: {e}", self).exec()
+
+    @QtCore.Slot()
+    def runTranslation(self):
+        if not self.model_loaded:
+            QtWidgets.QMessageBox.warning(
+                self, "Warning", "Load the translator model first."
+            )
+            return
+
+        bubbles_to_translate = [b for b in self.data.bubbles if b.text_ocr]
+
+        if not bubbles_to_translate:
+            QtWidgets.QMessage.warning(
+                self, "Warning", "No OCR text found. Run OCR first."
+            )
+            return
+
+        source_texts = [b.text_ocr for b in bubbles_to_translate]
+
+        try:
+            translated_texts = self.translator.predict(source_texts)
+
+            self.resultList.clear()
+            self.scene.clear()
+
+            if self.data.image_path:
+                pixmap = QtGui.QPixmap(self.data.image_path)
+                self.scene.addPixmap(pixmap)
+                self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+                self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+                for i, bubble in enumerate(bubbles_to_translate):
+                    bubble.text_translated = translated_texts[i]
+
+                    item = QtWidgets.QListWidgetItem(source_texts[i])
+                    item.setData(QtCore.Qt.UserRole, bubble)
+                    self.resultList.addItem(item)
+
+                    x1, y1, x2, y2 = bubble.bbox
+                    w = x2 - x1
+                    h = y2 - y1
+                    rect = QtCore.QRectF(x1, y1, w, h)
+
+                    rect_item = QtWidgets.QGraphicsRectItem(rect)
+                    rect_item.setPen(QtGui.QPen(QtCore.Qt.green, 2))
+                    self.scene.addItem(rect_item)
+
+                    text_item = QtWidgets.QGraphicsTextItem(bubble.text_translated)
+                    text_item.setDefaultTextColor(QtCore.Qt.green)
+                    text_item.setPos(x1, y1)
+                    text_item.setScale(1.5)
+                    text_item.setZValue(1)
+                    self.scene.addItem(text_item)
+
+                    bubble.graphics_item_en = text_item
+
+        except Exception as e:
+            MessageDialog("Error", f"Translation failed: {e}", self).exec()
+
+    @QtCore.Slot()
+    def highlightBubble(self, item):
+        bubble = item.data(QtCore.Qt.UserRole)
+        self.selected_bubble = bubble
+
+        if bubble:
+            self.originalTextEdit.setText(bubble.text_ocr)
+
+            self.transalatedTextEdit.blockSignals(True)
+            self.transalatedTextEdit.setText(bubble.text_translated)
+            self.transalatedTextEdit.blockSignals(False)
+
+            x1, y1, x2, y2 = bubble.bbox
+            w = x2 - x1
+            h = y2 - y1
+            rect = QtCore.QRectF(x1, y1, w, h)
+            self.view.ensureVisible(rect)
+
+    @QtCore.Slot()
+    def updateTranslation(self):
+        if self.selected_bubble:
+            new_text = self.transalatedTextEdit.toPlainText()
+            self.selected_bubble.text_translated = new_text
+
+            if (
+                hasattr(self.selected_bubble, "graphics_item_en")
+                and self.selected_bubble.graphics_item_en
+            ):
+                self.selected_bubble.graphics_item_en.setPlainText(new_text)
+
+    @QtCore.Slot()
+    def zoomIn(self):
+        self.view.scale(1.2, 1.2)
+
+    @QtCore.Slot()
+    def zoomOut(self):
+        self.view.scale(0.8, 0.8)
+
+    @QtCore.Slot()
+    def fitView(self):
+        if self.data.image_path:
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+
+class ReplaceTab(QtWidgets.QWidget):
+    def __init__(self, data_context: AppData):
+        super().__init__()
+        self.data = data_context
+        self.typesetter = MangaTypesetter()
+        self.final_image_pil = None
+
+        # --- graphics view --- #
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.view.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+
+        # --- controls --- #
+        self.runButton = QtWidgets.QPushButton("Typeset")
+        self.saveButton = QtWidgets.QPushButton("Save image")
+        self.saveButton.setEnabled(False)
+
+        self.zoomInButton = QtWidgets.QPushButton("Zoom In (+)")
+        self.zoomOutButton = QtWidgets.QPushButton("Zoom Out (-)")
+        self.fitButton = QtWidgets.QPushButton("Fit to space")
+
+        # --- layout --- #
+        self.layout = QtWidgets.QHBoxLayout(self)
+
+        # --- left --- #
+        left_widget = QtWidgets.QWidget()
+        left_layout = QtWidgets.QVBoxLayout(left_widget)
+
+        left_layout.addWidget(QtWidgets.QLabel("Typesetting"))
+        left_layout.addSpacing(10)
+        left_layout.addWidget(self.runButton)
+        left_layout.addWidget(self.saveButton)
+        left_layout.addStretch()
+
+        # --- right --- #
+        right_widget = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right_widget)
+        right_layout.addWidget(self.view)
+
+        zoom_layout = QtWidgets.QHBoxLayout()
+        zoom_layout.addWidget(self.zoomInButton)
+        zoom_layout.addWidget(self.zoomOutButton)
+        zoom_layout.addWidget(self.fitButton)
+        zoom_layout.addStretch()
+        right_layout.addLayout(zoom_layout)
+
+        # --- assemble --- #
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 3)
+
+        self.layout.addWidget(self.splitter)
+
+        # --- connections --- #
+        self.runButton.clicked.connect(self.runTypesetting)
+        self.saveButton.clicked.connect(self.saveImage)
+        self.zoomInButton.clicked.connect(self.zoomIn)
+        self.zoomOutButton.clicked.connect(self.zoomOut)
+        self.fitButton.clicked.connect(self.fitView)
+
+    def _polygon_to_mask(self, polygon, width, height):
+        mask = np.zeros((height, width), dtype=np.uint8)
+        points = []
+
+        for i in range(polygon.count()):
+            pt = polygon.at(i)
+            points.append([int(pt.x()), int(pt.y())])
+
+        if not points:
+            return mask
+
+        pts = np.array([points], dtype=np.int32)
+        cv2.fillPoly(mask, pts, 255)
+        return mask
+
+    @QtCore.Slot()
+    def runTypesetting(self):
+        if not self.data.pil_image:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No image loaded.")
+            return
+
+        if not self.data.bubbles:
+            QtWidgets.QMessageBox.warning(self, "Warning", "No bubbles found.")
+            return
+
+        try:
+            self.runButton.setText("Processing...")
+            self.runButton.setEnabled(False)
+            QtWidgets.QApplication.processEvents()
+
+            original_image = np.array(self.data.pil_image)
+            height, width, _ = original_image.shape
+
+            formatted_bubbles = []
+
+            for bubble in self.data.bubbles:
+                text = (
+                    bubble.text_translated
+                    if bubble.text_translated
+                    else bubble.text_ocr
+                )
+
+                mask = self._polygon_to_mask(bubble.polygon, width, height)
+
+                formatted_bubbles.append({
+                    "translated_text": text,
+                    "mask": mask,
+                    "original_mask": mask,
+                })
+
+            final_image_np = self.typesetter.render(original_image, formatted_bubbles)
+
+            self.final_image_pil = Image.fromarray(final_image_np)
+
+            image_data = self.final_image_pil.convert("RGBA").tobytes("raw", "RGBA")
+            qim = QtGui.QImage(image_data, width, height, QtGui.QImage.Format_RGBA8888)
+            pixmap = QtGui.QPixmap.fromImage(qim)
+
+            self.scene.clear()
+            self.scene.addPixmap(pixmap)
+            self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+            self.runButton.setText("Typeset")
+            self.runButton.setEnabled(True)
+            self.saveButton.setEnabled(True)
+
+        except Exception as e:
+            self.runButton.setText("Typeset")
+            self.runButton.setEnabled(True)
+            MessageDialog("Error", f"Typesetting failed: {e}", self).exec()
+
+    @QtCore.Slot()
+    def saveImage(self):
+        if not self.final_image_pil:
+            return
+
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save image", "", "PNG files (*.png);;JPEG files (*.jpg)"
+        )
+
+        if file_path:
+            try:
+                self.final_image_pil.save(file_path)
+                QtWidgets.QMessageBox.information(
+                    self, "Success", f"Image saved to {file_path}"
+                )
+            except Exception as e:
+                MessageDialog("Error", f"Failed to save image: {e}", self).exec()
+
+    @QtCore.Slot()
+    def zoomIn(self):
+        self.view.scale(1.2, 1.2)
+
+    @QtCore.Slot()
+    def zoomOut(self):
+        self.view.scale(0.8, 0.8)
+
+    @QtCore.Slot()
+    def fitView(self):
+        if self.scene.items():
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
 
 class MainApplication(QtWidgets.QWidget):
     def __init__(self):
@@ -345,16 +849,10 @@ class MainApplication(QtWidgets.QWidget):
         self.ocr_tab = OCRTab(self.app_data)
         self.tabs.addTab(self.ocr_tab, "OCR")
 
-        self.translate_tab = QtWidgets.QLabel("Translate")
-        self.translate_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.translate_tab = TranslateTab(self.app_data)
         self.tabs.addTab(self.translate_tab, "Translate")
 
-        self.edit_tab = QtWidgets.QLabel("Edit")
-        self.edit_tab.setAlignment(QtCore.Qt.AlignCenter)
-        self.tabs.addTab(self.edit_tab, "Edit")
-
-        self.replace_tab = QtWidgets.QLabel("Replace")
-        self.replace_tab.setAlignment(QtCore.Qt.AlignCenter)
+        self.replace_tab = ReplaceTab(self.app_data)
         self.tabs.addTab(self.replace_tab, "Replace")
 
 
