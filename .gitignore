@@ -4,3 +4,4 @@ __pycache__/
 runs/
 sample/
 test_env/
+dist/
