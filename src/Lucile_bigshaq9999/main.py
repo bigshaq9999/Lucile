@@ -2,11 +2,12 @@ import sys
 from ultralytics import YOLO
 from PySide6 import QtCore, QtWidgets, QtGui
 from PIL import Image
-from MangaOCRModel import MangaOCRModel
-from ElanMtJaEnTranslator import ElanMtJaEnTranslator
-from MangaTypesetter import MangaTypesetter
 import cv2
 import numpy as np
+
+from Lucile_bigshaq9999.MangaOCRModel import MangaOCRModel
+from Lucile_bigshaq9999.ElanMtJaEnTranslator import ElanMtJaEnTranslator
+from Lucile_bigshaq9999.MangaTypesetter import MangaTypesetter
 
 
 class MessageDialog(QtWidgets.QDialog):
@@ -178,6 +179,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     @QtCore.Slot()
     def runInference(self):
         if not self.model or not self.image_path:
+            # TODO: MessageDialog()
             return
 
         try:
@@ -195,18 +197,21 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 return
 
             masks = result.masks.xy
-            boxes = result.boxes.xyxy.cpu().numpy()
+            # TODO: why needs cpu().numpy()?
+            boxes = result.boxes.xyxy
 
             for segment_points, box in zip(masks, boxes):
                 polygon = QtGui.QPolygonF()
                 for point in segment_points:
                     polygon.append(QtCore.QPointF(point[0], point[1]))
 
+                # TODO: why box.tolist()?
                 bubble = Bubble(polygon, box.tolist())
                 self.data.bubbles.append(bubble)
 
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
 
+                # TODO: color picker here
                 pen = QtGui.QPen(QtCore.Qt.red)
                 pen.setWidth(2)
                 poly_item.setPen(pen)
@@ -324,6 +329,8 @@ class OCRTab(QtWidgets.QWidget):
         self.fitButton.clicked.connect(self.fitView)
 
     @QtCore.Slot()
+    # TODO: What if I want to load another model? It's annoying to load
+    # the model everytime I want to use the app.
     def loadModel(self):
         try:
             self.loadModelButton.setText("Loading...")
@@ -365,6 +372,7 @@ class OCRTab(QtWidgets.QWidget):
         valid_bubbles = []
 
         for bubble in self.data.bubbles:
+            # TODO Why do we need both bboxes and valid_bubbles?
             bboxes.append(bubble.bbox)
             valid_bubbles.append(bubble)
 
@@ -393,6 +401,7 @@ class OCRTab(QtWidgets.QWidget):
                 rect_item.setPen(QtGui.QPen(QtCore.Qt.blue, 2))
                 self.scene.addItem(rect_item)
 
+                # TODO: option to change color
                 text_item = QtWidgets.QGraphicsTextItem(text)
                 text_item.setDefaultTextColor(QtCore.Qt.blue)
                 text_item.setPos(x1, y1)
@@ -418,6 +427,7 @@ class OCRTab(QtWidgets.QWidget):
             w = x2 - x1
             h = y2 - y1
             rect = QtCore.QRectF(x1, y1, w, h)
+            # TODO: try centerOn?
             self.view.ensureVisible(rect)
 
     @QtCore.Slot()
@@ -539,6 +549,7 @@ class TranslateTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def loadModel(self):
+        # TODO: make it possible to change model after loading
         selected_model = self.modelSelector.currentText()
         try:
             self.loadModelButton.setText("Loading...")
@@ -617,6 +628,7 @@ class TranslateTab(QtWidgets.QWidget):
         except Exception as e:
             MessageDialog("Error", f"Translation failed: {e}", self).exec()
 
+    # TODO: missing QListWidgetItem here?
     @QtCore.Slot()
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
@@ -856,7 +868,7 @@ class MainApplication(QtWidgets.QWidget):
         self.tabs.addTab(self.replace_tab, "Replace")
 
 
-if __name__ == "__main__":
+def main():
     app = QtWidgets.QApplication([])
 
     widget = MainApplication()
@@ -864,3 +876,7 @@ if __name__ == "__main__":
     widget.show()
 
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
