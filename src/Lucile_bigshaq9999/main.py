@@ -1,5 +1,4 @@
 import sys
-from ultralytics import YOLO
 from PySide6 import QtCore, QtWidgets, QtGui
 from PIL import Image
 import cv2
@@ -164,6 +163,8 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def selectModel(self):
+        from ultralytics import YOLO
+
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select Model", "", "PyTorch Files (*.pt)"
         )
