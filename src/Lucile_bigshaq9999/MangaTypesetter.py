@@ -17,7 +17,7 @@ class MangaTypesetter:
         Returns the final numpy image with text typeset.
         """
         image_final = original_image_rgb.copy()
-        erosion_kernel = np.ones((6, 6), np.uint8)
+        erosion_kernel = np.ones((10, 10), np.uint8)
 
         # 1. Whitening (Inpainting) Step
         for bubble in bubbles:
