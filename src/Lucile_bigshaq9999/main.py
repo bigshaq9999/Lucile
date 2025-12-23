@@ -148,6 +148,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         )
 
         if file_path:
+            self.data.bubbles.clear()
             self.image_path = file_path
             self.data.image_path = file_path
             try:
@@ -188,6 +189,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 if item != self.pixmap_item:
                     self.scene.removeItem(item)
 
+            self.data.bubbles.clear()
             conf_val = self.confidenceSlider.value() / 100.0
 
             results = self.model(self.image_path, conf=conf_val)
