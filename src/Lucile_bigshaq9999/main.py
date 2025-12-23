@@ -651,7 +651,7 @@ class TranslateTab(QtWidgets.QWidget):
         bubbles_to_translate = [b for b in self.data.bubbles if b.text_ocr]
 
         if not bubbles_to_translate:
-            QtWidgets.QMessage.warning(
+            QtWidgets.QMessageBox.warning(
                 self, "Warning", "No OCR text found. Run OCR first."
             )
             return
