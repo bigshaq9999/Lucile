@@ -4,7 +4,6 @@ from PIL import Image
 import cv2
 import numpy as np
 
-from Lucile_bigshaq9999.ElanMtJaEnTranslator import ElanMtJaEnTranslator
 from Lucile_bigshaq9999.MangaTypesetter import MangaTypesetter
 
 
@@ -20,6 +19,28 @@ class OCRLoaderWorker(QtCore.QObject):
             model_wrapper.load_model()
 
             self.finished.emit(model_wrapper)
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class TranslatorLoadWorker(QtCore.QObject):
+    finished = QtCore.Signal(object)
+    error = QtCore.Signal(str)
+
+    def __init__(self, model_size):
+        super().__init__()
+        self.model_size = model_size
+
+    def run(self):
+        try:
+            from Lucile_bigshaq9999.ElanMtJaEnTranslator import ElanMtJaEnTranslator
+
+            translator = ElanMtJaEnTranslator()
+
+            translator.load_model(device="auto", elan_model=self.model_size)
+
+            self.finished.emit(translator)
 
         except Exception as e:
             self.error.emit(str(e))
@@ -494,7 +515,7 @@ class TranslateTab(QtWidgets.QWidget):
         self.data = data_context
         self.selected_bubble = None
 
-        self.translator = ElanMtJaEnTranslator()
+        self.translator = None
         self.model_loaded = False
 
         # --- graphics view --- #
@@ -583,28 +604,45 @@ class TranslateTab(QtWidgets.QWidget):
     def loadModel(self):
         # TODO: make it possible to change model after loading
         selected_model = self.modelSelector.currentText()
-        try:
-            self.loadModelButton.setText("Loading...")
-            self.loadModelButton.setEnabled(False)
-            self.modelSelector.setEnabled(False)
-            QtWidgets.QApplication.processEvents()
 
-            self.translator.load_model(device="auto", elan_model=selected_model)
-            self.model_loaded = True
+        self.loadModelButton.setText("Loading...")
+        self.loadModelButton.setEnabled(False)
+        self.modelSelector.setEnabled(False)
 
-            self.loadModelButton.setText(f"Loaded ({selected_model})")
-            QtWidgets.QMessageBox.information(
-                self, "Success", "Translator model loaded."
-            )
-        except Exception as e:
-            self.loadModelButton.setText("Load translator")
-            self.loadModelButton.setEnabled(True)
-            self.modelSelector.setEnabled(True)
-            MessageDialog("Error", f"Failed to load translator: {e}", self).exec()
+        self.thread = QtCore.QThread()
+        self.worker = TranslatorLoadWorker(selected_model)
+        self.worker.moveToThread(self.thread)
+
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.onLoadFinished)
+        self.worker.error.connect(self.onLoadError)
+
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    @QtCore.Slot(object)
+    def onLoadFinished(self, loaded_translator):
+        self.translator = loaded_translator
+        self.model_loaded = True
+
+        self.loadModelButton.setText("Ready")
+        self.loadModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
+        QtWidgets.QMessageBox.information(self, "Success", "Translator model loaded.")
+
+    @QtCore.Slot(str)
+    def onLoadError(self, error_msg):
+        self.loadModelButton.setText("Load translator")
+        self.loadModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
+        MessageDialog("Error", f"Failed to load translator: {error_msg}", self).exec()
 
     @QtCore.Slot()
     def runTranslation(self):
-        if not self.model_loaded:
+        if not self.model_loaded or self.translator is None:
             QtWidgets.QMessageBox.warning(
                 self, "Warning", "Load the translator model first."
             )
