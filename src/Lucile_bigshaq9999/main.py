@@ -201,15 +201,13 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
 
             masks = result.masks.xy
-            # TODO: why needs cpu().numpy()?
-            boxes = result.boxes.xyxy
+            boxes = result.boxes.xyxy.cpu().numpy()
 
             for segment_points, box in zip(masks, boxes):
                 polygon = QtGui.QPolygonF()
                 for point in segment_points:
                     polygon.append(QtCore.QPointF(point[0], point[1]))
 
-                # TODO: why box.tolist()?
                 bubble = Bubble(polygon, box.tolist())
                 self.data.bubbles.append(bubble)
 
@@ -376,7 +374,6 @@ class OCRTab(QtWidgets.QWidget):
         valid_bubbles = []
 
         for bubble in self.data.bubbles:
-            # TODO Why do we need both bboxes and valid_bubbles?
             bboxes.append(bubble.bbox)
             valid_bubbles.append(bubble)
 
@@ -431,7 +428,6 @@ class OCRTab(QtWidgets.QWidget):
             w = x2 - x1
             h = y2 - y1
             rect = QtCore.QRectF(x1, y1, w, h)
-            # TODO: try centerOn?
             self.view.ensureVisible(rect)
 
     @QtCore.Slot()
@@ -632,8 +628,7 @@ class TranslateTab(QtWidgets.QWidget):
         except Exception as e:
             MessageDialog("Error", f"Translation failed: {e}", self).exec()
 
-    # TODO: missing QListWidgetItem here?
-    @QtCore.Slot()
+    @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
         self.selected_bubble = bubble
