@@ -194,7 +194,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             self.data.bubbles.clear()
             conf_val = self.confidenceSlider.value() / 100.0
 
-            results = self.model(self.image_path, conf=conf_val)
+            results = self.model(self.image_path, conf=conf_val, retina_masks=True)
             result = results[0]
 
             if result.masks is None:
