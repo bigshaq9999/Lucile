@@ -4,9 +4,25 @@ from PIL import Image
 import cv2
 import numpy as np
 
-from Lucile_bigshaq9999.MangaOCRModel import MangaOCRModel
 from Lucile_bigshaq9999.ElanMtJaEnTranslator import ElanMtJaEnTranslator
 from Lucile_bigshaq9999.MangaTypesetter import MangaTypesetter
+
+
+class OCRLoaderWorker(QtCore.QObject):
+    finished = QtCore.Signal(object)
+    error = QtCore.Signal(str)
+
+    def run(self):
+        try:
+            from Lucile_bigshaq9999.MangaOCRModel import MangaOCRModel
+
+            model_wrapper = MangaOCRModel()
+            model_wrapper.load_model()
+
+            self.finished.emit(model_wrapper)
+
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class MessageDialog(QtWidgets.QDialog):
@@ -192,6 +208,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                     self.scene.removeItem(item)
 
             self.data.bubbles.clear()
+
             conf_val = self.confidenceSlider.value() / 100.0
 
             results = self.model(self.image_path, conf=conf_val, retina_masks=True)
@@ -261,7 +278,7 @@ class OCRTab(QtWidgets.QWidget):
         self.data = data_context
         self.selected_bubble = None
 
-        self.ocr_model = MangaOCRModel()
+        self.ocr_model = None
         self.model_loaded = False
 
         # --- buttons --- #
@@ -306,8 +323,6 @@ class OCRTab(QtWidgets.QWidget):
         zoom_layout.addWidget(self.zoomOutButton)
         zoom_layout.addWidget(self.fitButton)
         zoom_layout.addStretch()
-        # TODO: change this to edit button
-        # zoom_layout.addWidget(self.deleteButton)
         right_layout.addLayout(zoom_layout)
 
         # --- assemble --- #
@@ -334,20 +349,37 @@ class OCRTab(QtWidgets.QWidget):
     # TODO: What if I want to load another model? It's annoying to load
     # the model everytime I want to use the app.
     def loadModel(self):
-        try:
-            self.loadModelButton.setText("Loading...")
-            self.loadModelButton.setEnabled(False)
-            QtWidgets.QApplication.processEvents()
+        self.loadModelButton.setText("Loading...")
+        self.loadModelButton.setEnabled(False)
 
-            self.ocr_model.load_model()
-            self.model_loaded = True
+        self.thread = QtCore.QThread()
+        self.worker = OCRLoaderWorker()
+        self.worker.moveToThread(self.thread)
 
-            self.loadModelButton.setText("Model Loaded")
-            QtWidgets.QMessageBox.information(self, "success", "MangaOCR model loaded.")
-        except Exception as e:
-            self.loadModelButton.setText("Load OCR model")
-            self.loadModelButton.setEnabled(True)
-            MessageDialog("Error", f"Failed to load OCR model: {e}", self).exec()
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.onLoadFinished)
+        self.worker.error.connect(self.onLoadError)
+
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    @QtCore.Slot(object)
+    def onLoadFinished(self, loaded_model):
+        self.ocr_model = loaded_model
+        self.model_loaded = True
+
+        self.loadModelButton.setText("Model loaded")
+        self.loadModelButton.setEnabled(True)
+        QtWidgets.QMessageBox.information(self, "Success", "MangaOCR model loaded.")
+
+    @QtCore.Slot(str)
+    def onLoadError(self, error_msg):
+        self.loadModelButton.setText("Load OCR model")
+        self.loadModelButton.setEnabled(True)
+        MessageDialog("Error", f"Failed to load model:\n{error_msg}", self).exec()
 
     @QtCore.Slot()
     def runOCR(self):
