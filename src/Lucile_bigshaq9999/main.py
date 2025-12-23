@@ -180,9 +180,11 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def runInference(self):
-        if not self.model or not self.image_path:
-            # TODO: MessageDialog()
-            return
+        if not self.model:
+            QtWidgets.QMessageBox.information(self, "Warning", "Load model first.")
+
+        if not self.image_path:
+            QtWidgets.QMessageBox.information(self, "Warning", "Load image first.")
 
         try:
             for item in self.scene.items():
@@ -196,8 +198,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             result = results[0]
 
             if result.masks is None:
-                print("No segmentation masks found.")
-                return
+                QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
 
             masks = result.masks.xy
             # TODO: why needs cpu().numpy()?
