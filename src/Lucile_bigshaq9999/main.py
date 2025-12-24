@@ -1,12 +1,49 @@
 import sys
-from ultralytics import YOLO
 from PySide6 import QtCore, QtWidgets, QtGui
 from PIL import Image
-from MangaOCRModel import MangaOCRModel
-from ElanMtJaEnTranslator import ElanMtJaEnTranslator
-from MangaTypesetter import MangaTypesetter
 import cv2
 import numpy as np
+
+from Lucile_bigshaq9999.MangaTypesetter import MangaTypesetter
+
+
+class OCRLoaderWorker(QtCore.QObject):
+    finished = QtCore.Signal(object)
+    error = QtCore.Signal(str)
+
+    def run(self):
+        try:
+            from Lucile_bigshaq9999.MangaOCRModel import MangaOCRModel
+
+            model_wrapper = MangaOCRModel()
+            model_wrapper.load_model()
+
+            self.finished.emit(model_wrapper)
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class TranslatorLoadWorker(QtCore.QObject):
+    finished = QtCore.Signal(object)
+    error = QtCore.Signal(str)
+
+    def __init__(self, model_size):
+        super().__init__()
+        self.model_size = model_size
+
+    def run(self):
+        try:
+            from Lucile_bigshaq9999.ElanMtJaEnTranslator import ElanMtJaEnTranslator
+
+            translator = ElanMtJaEnTranslator()
+
+            translator.load_model(device="auto", elan_model=self.model_size)
+
+            self.finished.emit(translator)
+
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class MessageDialog(QtWidgets.QDialog):
@@ -148,6 +185,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         )
 
         if file_path:
+            self.data.bubbles.clear()
             self.image_path = file_path
             self.data.image_path = file_path
             try:
@@ -163,6 +201,8 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def selectModel(self):
+        from ultralytics import YOLO
+
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select Model", "", "PyTorch Files (*.pt)"
         )
@@ -177,22 +217,26 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def runInference(self):
-        if not self.model or not self.image_path:
-            return
+        if not self.model:
+            QtWidgets.QMessageBox.information(self, "Warning", "Load model first.")
+
+        if not self.image_path:
+            QtWidgets.QMessageBox.information(self, "Warning", "Load image first.")
 
         try:
             for item in self.scene.items():
                 if item != self.pixmap_item:
                     self.scene.removeItem(item)
 
+            self.data.bubbles.clear()
+
             conf_val = self.confidenceSlider.value() / 100.0
 
-            results = self.model(self.image_path, conf=conf_val)
+            results = self.model(self.image_path, conf=conf_val, retina_masks=True)
             result = results[0]
 
             if result.masks is None:
-                print("No segmentation masks found.")
-                return
+                QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
 
             masks = result.masks.xy
             boxes = result.boxes.xyxy.cpu().numpy()
@@ -207,6 +251,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
 
+                # TODO: color picker here
                 pen = QtGui.QPen(QtCore.Qt.red)
                 pen.setWidth(2)
                 poly_item.setPen(pen)
@@ -254,8 +299,13 @@ class OCRTab(QtWidgets.QWidget):
         self.data = data_context
         self.selected_bubble = None
 
-        self.ocr_model = MangaOCRModel()
+        self.ocr_model = None
         self.model_loaded = False
+
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.view.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
 
         # --- buttons --- #
         self.loadModelButton = QtWidgets.QPushButton("Load OCR Model")
@@ -284,10 +334,6 @@ class OCRTab(QtWidgets.QWidget):
         left_layout.addWidget(QtWidgets.QLabel("Edit text:"))
         left_layout.addWidget(self.textEditor, 1)
 
-        self.scene = QtWidgets.QGraphicsScene(self)
-        self.view = QtWidgets.QGraphicsView(self.scene)
-        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
-
         # --- right --- #
         right_widget = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_widget)
@@ -299,8 +345,6 @@ class OCRTab(QtWidgets.QWidget):
         zoom_layout.addWidget(self.zoomOutButton)
         zoom_layout.addWidget(self.fitButton)
         zoom_layout.addStretch()
-        # TODO: change this to edit button
-        # zoom_layout.addWidget(self.deleteButton)
         right_layout.addLayout(zoom_layout)
 
         # --- assemble --- #
@@ -324,21 +368,40 @@ class OCRTab(QtWidgets.QWidget):
         self.fitButton.clicked.connect(self.fitView)
 
     @QtCore.Slot()
+    # TODO: What if I want to load another model? It's annoying to load
+    # the model everytime I want to use the app.
     def loadModel(self):
-        try:
-            self.loadModelButton.setText("Loading...")
-            self.loadModelButton.setEnabled(False)
-            QtWidgets.QApplication.processEvents()
+        self.loadModelButton.setText("Loading...")
+        self.loadModelButton.setEnabled(False)
 
-            self.ocr_model.load_model()
-            self.model_loaded = True
+        self.thread = QtCore.QThread()
+        self.worker = OCRLoaderWorker()
+        self.worker.moveToThread(self.thread)
 
-            self.loadModelButton.setText("Model Loaded")
-            QtWidgets.QMessageBox.information(self, "success", "MangaOCR model loaded.")
-        except Exception as e:
-            self.loadModelButton.setText("Load OCR model")
-            self.loadModelButton.setEnabled(True)
-            MessageDialog("Error", f"Failed to load OCR model: {e}", self).exec()
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.onLoadFinished)
+        self.worker.error.connect(self.onLoadError)
+
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    @QtCore.Slot(object)
+    def onLoadFinished(self, loaded_model):
+        self.ocr_model = loaded_model
+        self.model_loaded = True
+
+        self.loadModelButton.setText("Model loaded")
+        self.loadModelButton.setEnabled(True)
+        QtWidgets.QMessageBox.information(self, "Success", "MangaOCR model loaded.")
+
+    @QtCore.Slot(str)
+    def onLoadError(self, error_msg):
+        self.loadModelButton.setText("Load OCR model")
+        self.loadModelButton.setEnabled(True)
+        MessageDialog("Error", f"Failed to load model:\n{error_msg}", self).exec()
 
     @QtCore.Slot()
     def runOCR(self):
@@ -393,6 +456,7 @@ class OCRTab(QtWidgets.QWidget):
                 rect_item.setPen(QtGui.QPen(QtCore.Qt.blue, 2))
                 self.scene.addItem(rect_item)
 
+                # TODO: option to change color
                 text_item = QtWidgets.QGraphicsTextItem(text)
                 text_item.setDefaultTextColor(QtCore.Qt.blue)
                 text_item.setPos(x1, y1)
@@ -452,7 +516,7 @@ class TranslateTab(QtWidgets.QWidget):
         self.data = data_context
         self.selected_bubble = None
 
-        self.translator = ElanMtJaEnTranslator()
+        self.translator = None
         self.model_loaded = False
 
         # --- graphics view --- #
@@ -539,29 +603,47 @@ class TranslateTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def loadModel(self):
+        # TODO: make it possible to change model after loading
         selected_model = self.modelSelector.currentText()
-        try:
-            self.loadModelButton.setText("Loading...")
-            self.loadModelButton.setEnabled(False)
-            self.modelSelector.setEnabled(False)
-            QtWidgets.QApplication.processEvents()
 
-            self.translator.load_model(device="auto", elan_model=selected_model)
-            self.model_loaded = True
+        self.loadModelButton.setText("Loading...")
+        self.loadModelButton.setEnabled(False)
+        self.modelSelector.setEnabled(False)
 
-            self.loadModelButton.setText(f"Loaded ({selected_model})")
-            QtWidgets.QMessageBox.information(
-                self, "Success", "Translator model loaded."
-            )
-        except Exception as e:
-            self.loadModelButton.setText("Load translator")
-            self.loadModelButton.setEnabled(True)
-            self.modelSelector.setEnabled(True)
-            MessageDialog("Error", f"Failed to load translator: {e}", self).exec()
+        self.thread = QtCore.QThread()
+        self.worker = TranslatorLoadWorker(selected_model)
+        self.worker.moveToThread(self.thread)
+
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.onLoadFinished)
+        self.worker.error.connect(self.onLoadError)
+
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    @QtCore.Slot(object)
+    def onLoadFinished(self, loaded_translator):
+        self.translator = loaded_translator
+        self.model_loaded = True
+
+        self.loadModelButton.setText("Ready")
+        self.loadModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
+        QtWidgets.QMessageBox.information(self, "Success", "Translator model loaded.")
+
+    @QtCore.Slot(str)
+    def onLoadError(self, error_msg):
+        self.loadModelButton.setText("Load translator")
+        self.loadModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
+        MessageDialog("Error", f"Failed to load translator: {error_msg}", self).exec()
 
     @QtCore.Slot()
     def runTranslation(self):
-        if not self.model_loaded:
+        if not self.model_loaded or self.translator is None:
             QtWidgets.QMessageBox.warning(
                 self, "Warning", "Load the translator model first."
             )
@@ -570,7 +652,7 @@ class TranslateTab(QtWidgets.QWidget):
         bubbles_to_translate = [b for b in self.data.bubbles if b.text_ocr]
 
         if not bubbles_to_translate:
-            QtWidgets.QMessage.warning(
+            QtWidgets.QMessageBox.warning(
                 self, "Warning", "No OCR text found. Run OCR first."
             )
             return
@@ -617,7 +699,7 @@ class TranslateTab(QtWidgets.QWidget):
         except Exception as e:
             MessageDialog("Error", f"Translation failed: {e}", self).exec()
 
-    @QtCore.Slot()
+    @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
         bubble = item.data(QtCore.Qt.UserRole)
         self.selected_bubble = bubble
@@ -856,7 +938,7 @@ class MainApplication(QtWidgets.QWidget):
         self.tabs.addTab(self.replace_tab, "Replace")
 
 
-if __name__ == "__main__":
+def main():
     app = QtWidgets.QApplication([])
 
     widget = MainApplication()
@@ -864,3 +946,7 @@ if __name__ == "__main__":
     widget.show()
 
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

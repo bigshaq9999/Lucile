@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "Lucile_bigshaq9999"
+version = "0.0.2"
+authors = [
+  { name="bigshaq9999", email="" },
+]
+description = "A manga translate annotation app"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+dependencies = [
+  "ultralytics",
+  "pyside6",
+  "opencv-python",
+  "numpy",
+  "manga-ocr",
+  "accelerate",
+  "sentencepiece",
+  "sacremoses"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/Lucile_bigshaq9999"]
+
+[project.scripts]
+lucile = "Lucile_bigshaq9999.main:main"
