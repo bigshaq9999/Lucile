@@ -85,6 +85,64 @@ class TranslatorLoadWorker(QtCore.QObject):
             self.error.emit(str(e))
 
 
+class InferenceWorker(QtCore.QObject):
+    finished = QtCore.Signal(object, object, object)
+    error = QtCore.Signal(str)
+
+    def __init__(self, model, image_path):
+        super().__init__()
+        self.model = model
+        self.image_path = image_path
+
+    def run(self):
+        try:
+            image_rgb, raw_masks, refined_bubbles = self.model.detect_and_segment(
+                self.image_path
+            )
+            self.finished.emit(image_rgb, raw_masks, refined_bubbles)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class OCRWorker(QtCore.QObject):
+    finished = QtCore.Signal(object, object)
+    error = QtCore.Signal(str)
+
+    def __init__(self, ocr_model, pil_image, bboxes, valid_bubbles):
+        super().__init__()
+        self.ocr_model = ocr_model
+        self.pil_image = pil_image
+        self.bboxes = bboxes
+        self.valid_bubbles = valid_bubbles
+
+    def run(self):
+        try:
+            texts = self.ocr_model.predict(self.pil_image, self.bboxes)
+            self.finished.emit(texts, self.valid_bubbles)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class TranslationWorker(QtCore.QObject):
+    finished = QtCore.Signal(object, object, object)
+    error = QtCore.Signal(str)
+
+    def __init__(self, translator, bubbles_to_translate, source_texts):
+        super().__init__()
+        self.translator = translator
+        self.bubbles_to_translate = bubbles_to_translate
+        self.source_texts = source_texts
+
+    def run(self):
+        try:
+            translated_texts = self.translator.predict(self.source_texts)
+            self.finished.emit(
+                self.bubbles_to_translate, self.source_texts, translated_texts
+            )
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MessageDialog(QtWidgets.QDialog):
     def __init__(self, title, message, parent=None):
         super().__init__(parent)
@@ -159,14 +217,6 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.zoomOutButton = QtWidgets.QPushButton("Zoom Out (-)")
         self.fitButton = QtWidgets.QPushButton("Fit to space")
 
-        # confidence slider
-        self.confidenceLabel = QtWidgets.QLabel("Confidence: 0.25")
-        self.confidenceSlider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.confidenceSlider.setMinimum(1)
-        self.confidenceSlider.setMaximum(100)
-        self.confidenceSlider.setValue(25)
-        self.confidenceSlider.setTickInterval(10)
-
         # --- layout --- #
         self.layout = QtWidgets.QHBoxLayout(self)
 
@@ -177,17 +227,12 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         left_layout.addWidget(self.modelSelector)
         left_layout.addWidget(self.selectModelButton)
         left_layout.addWidget(self.openImageButton)
+        left_layout.addWidget(self.runInferenceButton)
         left_layout.addWidget(self.imageList)
 
         # --- right --- #
         right_widget = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_widget)
-
-        inference_layout = QtWidgets.QHBoxLayout()
-        inference_layout.addWidget(self.confidenceLabel)
-        inference_layout.addWidget(self.confidenceSlider)
-        inference_layout.addWidget(self.runInferenceButton)
-        right_layout.addLayout(inference_layout)
 
         right_layout.addWidget(self.view)
 
@@ -215,13 +260,9 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.openImageButton.clicked.connect(self.openImage)
         self.runInferenceButton.clicked.connect(self.runInference)
         self.deleteButton.clicked.connect(self.deleteSelectedBubble)
-        self.confidenceSlider.valueChanged.connect(self.updateConfLabel)
         self.zoomInButton.clicked.connect(self.zoomIn)
         self.zoomOutButton.clicked.connect(self.zoomOut)
         self.fitButton.clicked.connect(self.fitView)
-
-    def updateConfLabel(self, value):
-        self.confidenceLabel.setText(f"Confidence: {value / 100.0:.2f}")
 
     @QtCore.Slot()
     def openImage(self):
@@ -298,55 +339,77 @@ class SegmentBubbleTab(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Warning", "Load image first.")
             return
 
-        try:
-            for item in self.scene.items():
-                if item != self.pixmap_item:
-                    self.scene.removeItem(item)
+        for item in self.scene.items():
+            if item != self.pixmap_item:
+                self.scene.removeItem(item)
 
-            self.data.bubbles.clear()
+        self.data.bubbles.clear()
 
-            image_rgb, raw_masks, refined_bubbles = self.model.detect_and_segment(
-                self.image_path
-            )
-            self.data.image_np = image_rgb
+        self.runInferenceButton.setEnabled(False)
+        self.runInferenceButton.setText("Running...")
 
-            if not refined_bubbles:
-                QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
-                return
+        self.thread = QtCore.QThread()
+        self.worker = InferenceWorker(self.model, self.image_path)
+        self.worker.moveToThread(self.thread)
 
-            print(f"Found {len(refined_bubbles)} segmented bubbles")
+        self.thread.started.connect(self.worker.run)
 
-            for bubble_data in refined_bubbles:
-                contour = bubble_data["contour"]
-                polygon = QtGui.QPolygonF()
+        self.worker.finished.connect(self.onInferenceFinished)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
 
-                for point_wrapper in contour:
-                    x, y = point_wrapper[0]
-                    polygon.append(QtCore.QPointF(float(x), float(y)))
+        self.worker.error.connect(self.onInferenceError)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.error.connect(self.worker.deleteLater)
 
-                x, y, w, h = bubble_data["bbox"]
-                box_xyxy = [x, y, x + w, y + h]
+        self.thread.finished.connect(self.thread.deleteLater)
 
-                raw_mask_np = bubble_data["original_mask"]
-                bubble_obj = Bubble(polygon, box_xyxy, raw_mask_np)
-                self.data.bubbles.append(bubble_obj)
+        self.thread.start()
 
-                poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
-                pen = QtGui.QPen(QtCore.Qt.red)
-                pen.setWidth(2)
-                poly_item.setPen(pen)
-                poly_item.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0, 50)))
-                poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
-                poly_item.setData(0, bubble_obj)
+    @QtCore.Slot(object, object, object)
+    def onInferenceFinished(self, image_rgb, raw_masks, refined_bubbles):
+        self.runInferenceButton.setEnabled(True)
+        self.runInferenceButton.setText("Run inference")
 
-                self.scene.addItem(poly_item)
+        self.data.image_np = image_rgb
 
-        except Exception as e:
-            print(f"Inference Error: {e}")
-            import traceback
+        if not refined_bubbles:
+            QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
+            return
 
-            traceback.print_exc()
-            MessageDialog("Error", f"Inference failed: \n{e}", self).exec()
+        print(f"Found {len(refined_bubbles)} segmented bubbles")
+
+        for bubble_data in refined_bubbles:
+            contour = bubble_data["contour"]
+            polygon = QtGui.QPolygonF()
+
+            for point_wrapper in contour:
+                x, y = point_wrapper[0]
+                polygon.append(QtCore.QPointF(float(x), float(y)))
+
+            x, y, w, h = bubble_data["bbox"]
+            box_xyxy = [x, y, x + w, y + h]
+
+            raw_mask_np = bubble_data["original_mask"]
+            bubble_obj = Bubble(polygon, box_xyxy, raw_mask_np)
+            self.data.bubbles.append(bubble_obj)
+
+            poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
+            pen = QtGui.QPen(QtCore.Qt.red)
+            pen.setWidth(2)
+            poly_item.setPen(pen)
+            poly_item.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0, 50)))
+            poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
+            poly_item.setData(0, bubble_obj)
+
+            self.scene.addItem(poly_item)
+
+    @QtCore.Slot(str)
+    def onInferenceError(self, error_msg):
+        self.runInferenceButton.setEnabled(True)
+        self.runInferenceButton.setText("Run inference")
+        print(f"Inference Error: {error_msg}")
+        MessageDialog("Error", f"Inference failed: \n{error_msg}", self).exec()
 
     @QtCore.Slot()
     def deleteSelectedBubble(self):
@@ -501,12 +564,6 @@ class OCRTab(QtWidgets.QWidget):
             )
             return
 
-        self.scene.clear()
-        pixmap = QtGui.QPixmap(self.data.image_path)
-        self.scene.addPixmap(pixmap)
-        self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
-        self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
-
         bboxes = []
         valid_bubbles = []
 
@@ -517,39 +574,74 @@ class OCRTab(QtWidgets.QWidget):
         if not bboxes:
             return
 
-        try:
-            texts = self.ocr_model.predict(self.data.pil_image, bboxes)
+        self.runOCRButton.setEnabled(False)
+        self.runOCRButton.setText("Loading...")
+        self.resultList.clear()
 
-            self.resultList.clear()
+        self.scene.clear()
 
-            for i, text in enumerate(texts):
-                valid_bubbles[i].text_ocr = text
+        self.thread = QtCore.QThread()
+        self.worker = OCRWorker(
+            self.ocr_model, self.data.pil_image, bboxes, valid_bubbles
+        )
+        self.worker.moveToThread(self.thread)
 
-                preview = text[:20] + "..." if len(text) > 20 else text
-                item = QtWidgets.QListWidgetItem(f"{i + 1}: {preview}")
-                item.setData(QtCore.Qt.UserRole, valid_bubbles[i])
-                self.resultList.addItem(item)
+        self.thread.started.connect(self.worker.run)
 
-                x1, y1, x2, y2 = valid_bubbles[i].bbox
-                w = x2 - x1
-                h = y2 - y1
-                rect = QtCore.QRectF(x1, y1, w, h)
+        self.worker.finished.connect(self.onOCRFinished)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
 
-                rect_item = QtWidgets.QGraphicsRectItem(rect)
-                rect_item.setPen(QtGui.QPen(QtCore.Qt.blue, 2))
-                self.scene.addItem(rect_item)
+        self.worker.error.connect(self.onOCRError)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.error.connect(self.worker.deleteLater)
 
-                # TODO: option to change color
-                text_item = QtWidgets.QGraphicsTextItem(text)
-                text_item.setDefaultTextColor(QtCore.Qt.blue)
-                text_item.setPos(x1, y1)
-                text_item.setScale(1.5)
-                self.scene.addItem(text_item)
+        self.thread.finished.connect(self.thread.deleteLater)
 
-                valid_bubbles[i].graphics_item = text_item
+        self.thread.start()
 
-        except Exception as e:
-            MessageDialog("Error", f"OCR Failed: {e}", self).exec()
+    @QtCore.Slot(object, object)
+    def onOCRFinished(self, texts, valid_bubbles):
+        self.runOCRButton.setEnabled(True)
+        self.runOCRButton.setText("Loading...")
+
+        self.scene.clear()
+        pixmap = QtGui.QPixmap(self.data.image_path)
+        self.scene.addPixmap(pixmap)
+        self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+        self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+        for i, text in enumerate(texts):
+            valid_bubbles[i].text_ocr = text
+
+            preview = text[:20] + "..." if len(text) > 20 else text
+            item = QtWidgets.QListWidgetItem(f"{i + 1}: {preview}")
+            item.setData(QtCore.Qt.UserRole, valid_bubbles[i])
+            self.resultList.addItem(item)
+
+            x1, y1, x2, y2 = valid_bubbles[i].bbox
+            w = x2 - x1
+            h = y2 - y1
+            rect = QtCore.QRectF(x1, y1, w, h)
+
+            rect_item = QtWidgets.QGraphicsRectItem(rect)
+            rect_item.setPen(QtGui.QPen(QtCore.Qt.blue, 2))
+            self.scene.addItem(rect_item)
+
+            # TODO: option to change color
+            text_item = QtWidgets.QGraphicsTextItem(text)
+            text_item.setDefaultTextColor(QtCore.Qt.blue)
+            text_item.setPos(x1, y1)
+            text_item.setScale(1.5)
+            self.scene.addItem(text_item)
+
+            valid_bubbles[i].graphics_item = text_item
+
+    @QtCore.Slot(str)
+    def onOCRError(self, error_msg):
+        self.runOCRButton.setEnabled(True)
+        self.runOCRButton.setText("Run OCR")
+        MessageDialog("Error", f"OCR Failed: {error_msg}", self).exec()
 
     @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
@@ -746,45 +838,73 @@ class TranslateTab(QtWidgets.QWidget):
 
         source_texts = [b.text_ocr for b in bubbles_to_translate]
 
-        try:
-            translated_texts = self.translator.predict(source_texts)
+        self.runTranslateButton.setEnabled(False)
+        self.runTranslateButton.setText("Translating...")
 
-            self.resultList.clear()
-            self.scene.clear()
+        self.thread = QtCore.QThread()
+        self.worker = TranslationWorker(
+            self.translator, bubbles_to_translate, source_texts
+        )
+        self.worker.moveToThread(self.thread)
 
-            if self.data.image_path:
-                pixmap = QtGui.QPixmap(self.data.image_path)
-                self.scene.addPixmap(pixmap)
-                self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
-                self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+        self.thread.started.connect(self.worker.run)
 
-                for i, bubble in enumerate(bubbles_to_translate):
-                    bubble.text_translated = translated_texts[i]
+        self.worker.finished.connect(self.onTranslationFinished)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
 
-                    item = QtWidgets.QListWidgetItem(source_texts[i])
-                    item.setData(QtCore.Qt.UserRole, bubble)
-                    self.resultList.addItem(item)
+        self.worker.error.connect(self.onTranslationError)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.error.connect(self.worker.deleteLater)
 
-                    x1, y1, x2, y2 = bubble.bbox
-                    w = x2 - x1
-                    h = y2 - y1
-                    rect = QtCore.QRectF(x1, y1, w, h)
+        self.thread.finished.connect(self.thread.deleteLater)
 
-                    rect_item = QtWidgets.QGraphicsRectItem(rect)
-                    rect_item.setPen(QtGui.QPen(QtCore.Qt.green, 2))
-                    self.scene.addItem(rect_item)
+        self.thread.start()
 
-                    text_item = QtWidgets.QGraphicsTextItem(bubble.text_translated)
-                    text_item.setDefaultTextColor(QtCore.Qt.green)
-                    text_item.setPos(x1, y1)
-                    text_item.setScale(1.5)
-                    text_item.setZValue(1)
-                    self.scene.addItem(text_item)
+    @QtCore.Slot(object, object, object)
+    def onTranslationFinished(self, bubbles_list, source_list, translated_texts):
+        self.runTranslateButton.setEnabled(True)
+        self.runTranslateButton.setText("Translate")
 
-                    bubble.graphics_item_en = text_item
+        self.resultList.clear()
+        self.scene.clear()
 
-        except Exception as e:
-            MessageDialog("Error", f"Translation failed: {e}", self).exec()
+        if self.data.image_path:
+            pixmap = QtGui.QPixmap(self.data.image_path)
+            self.scene.addPixmap(pixmap)
+            self.scene.setSceneRect(QtCore.QRectF(pixmap.rect()))
+            self.view.fitInView(self.scene.sceneRect(), QtCore.Qt.KeepAspectRatio)
+
+            for i, bubble in enumerate(bubbles_list):
+                bubble.text_translated = translated_texts[i]
+
+                item = QtWidgets.QListWidgetItem(source_list[i])
+                item.setData(QtCore.Qt.UserRole, bubble)
+                self.resultList.addItem(item)
+
+                x1, y1, x2, y2 = bubble.bbox
+                w = x2 - x1
+                h = y2 - y1
+                rect = QtCore.QRectF(x1, y1, w, h)
+
+                rect_item = QtWidgets.QGraphicsRectItem(rect)
+                rect_item.setPen(QtGui.QPen(QtCore.Qt.green, 2))
+                self.scene.addItem(rect_item)
+
+                text_item = QtWidgets.QGraphicsTextItem(bubble.text_translated)
+                text_item.setDefaultTextColor(QtCore.Qt.green)
+                text_item.setPos(x1, y1)
+                text_item.setScale(1.5)
+                text_item.setZValue(1)
+                self.scene.addItem(text_item)
+
+                bubble.graphics_item_en = text_item
+
+    @QtCore.Slot(str)
+    def onTranslationError(self, error_msg):
+        self.runTranslateButton.setEnabled(True)
+        self.runTranslateButton.setText("Translate")
+        MessageDialog("Error", f"Translation failed: {error_msg}", self).exec()
 
     @QtCore.Slot(QtWidgets.QListWidgetItem)
     def highlightBubble(self, item):
