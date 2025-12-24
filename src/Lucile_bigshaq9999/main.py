@@ -21,7 +21,7 @@ class SegmentLoaderWorker(QtCore.QObject):
         try:
             from huggingface_hub import hf_hub_download
 
-            BASE_DIR = os.path.join(os.getcwd(), "..", "..", "..")
+            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
             file_path = hf_hub_download(
                 repo_id=f"TheBlindMaster/{self.model_name}-manga-bubble-seg",
@@ -108,9 +108,10 @@ class MessageDialog(QtWidgets.QDialog):
 
 
 class Bubble:
-    def __init__(self, polygon, bbox):
+    def __init__(self, polygon, bbox, raw_mask):
         self.polygon = polygon
         self.bbox = bbox
+        self.raw_mask = raw_mask
         self.text_ocr = ""
         self.text_translated = ""
 
@@ -119,6 +120,7 @@ class AppData:
     def __init__(self):
         self.image_path = None
         self.pil_image = None
+        self.image_np = None
         self.bubbles = []
 
 
@@ -255,11 +257,15 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.onLoadFinished)
-        self.worker.error.connect(self.onLoadError)
 
+        self.worker.finished.connect(self.onLoadFinished)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
+
+        self.worker.error.connect(self.onLoadError)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.error.connect(self.worker.deleteLater)
+
         self.thread.finished.connect(self.thread.deleteLater)
 
         self.thread.start()
@@ -286,9 +292,11 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     def runInference(self):
         if not self.model:
             QtWidgets.QMessageBox.information(self, "Warning", "Load model first.")
+            return
 
         if not self.image_path:
             QtWidgets.QMessageBox.information(self, "Warning", "Load image first.")
+            return
 
         try:
             for item in self.scene.items():
@@ -297,7 +305,10 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
             self.data.bubbles.clear()
 
-            _, refined_bubbles = self.model.detect_and_segment(self.image_path)
+            image_rgb, raw_masks, refined_bubbles = self.model.detect_and_segment(
+                self.image_path
+            )
+            self.data.image_np = image_rgb
 
             if not refined_bubbles:
                 QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
@@ -316,7 +327,8 @@ class SegmentBubbleTab(QtWidgets.QWidget):
                 x, y, w, h = bubble_data["bbox"]
                 box_xyxy = [x, y, x + w, y + h]
 
-                bubble_obj = Bubble(polygon, box_xyxy)
+                raw_mask_np = bubble_data["original_mask"]
+                bubble_obj = Bubble(polygon, box_xyxy, raw_mask_np)
                 self.data.bubbles.append(bubble_obj)
 
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
@@ -446,11 +458,15 @@ class OCRTab(QtWidgets.QWidget):
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.onLoadFinished)
-        self.worker.error.connect(self.onLoadError)
 
+        self.worker.finished.connect(self.onLoadFinished)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
+
+        self.worker.error.connect(self.onLoadError)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.error.connect(self.worker.deleteLater)
+
         self.thread.finished.connect(self.thread.deleteLater)
 
         self.thread.start()
@@ -682,11 +698,15 @@ class TranslateTab(QtWidgets.QWidget):
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.onLoadFinished)
-        self.worker.error.connect(self.onLoadError)
 
+        self.worker.finished.connect(self.onLoadFinished)
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
+
+        self.worker.error.connect(self.onLoadError)
+        self.worker.error.connect(self.thread.quit)
+        self.worker.error.connect(self.worker.deleteLater)
+
         self.thread.finished.connect(self.thread.deleteLater)
 
         self.thread.start()
@@ -890,7 +910,7 @@ class ReplaceTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def runTypesetting(self):
-        if not self.data.pil_image:
+        if self.data.image_np is None:
             QtWidgets.QMessageBox.warning(self, "Warning", "No image loaded.")
             return
 
@@ -903,7 +923,7 @@ class ReplaceTab(QtWidgets.QWidget):
             self.runButton.setEnabled(False)
             QtWidgets.QApplication.processEvents()
 
-            original_image = np.array(self.data.pil_image)
+            original_image = self.data.image_np
             height, width, _ = original_image.shape
 
             formatted_bubbles = []
@@ -915,12 +935,12 @@ class ReplaceTab(QtWidgets.QWidget):
                     else bubble.text_ocr
                 )
 
-                mask = self._polygon_to_mask(bubble.polygon, width, height)
+                refined_mask = self._polygon_to_mask(bubble.polygon, width, height)
 
                 formatted_bubbles.append({
                     "translated_text": text,
-                    "mask": mask,
-                    "original_mask": mask,
+                    "mask": refined_mask,
+                    "original_mask": bubble.raw_mask,
                 })
 
             final_image_np = self.typesetter.render(original_image, formatted_bubbles)
