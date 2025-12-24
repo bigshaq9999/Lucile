@@ -1,10 +1,49 @@
 import sys
+import os
 from PySide6 import QtCore, QtWidgets, QtGui
 from PIL import Image
 import cv2
 import numpy as np
 
 from Lucile_bigshaq9999.MangaTypesetter import MangaTypesetter
+
+
+class SegmentLoaderWorker(QtCore.QObject):
+    finished = QtCore.Signal(object)
+    error = QtCore.Signal(str)
+
+    def __init__(self, model_name):
+        super().__init__()
+        self.model_name = model_name
+
+    def run(self):
+        try:
+            from ultralytics import YOLO
+            from huggingface_hub import hf_hub_download
+
+            BASE_DIR = os.path.join(os.getcwd(), "..", "..", "..")
+
+            file_path = hf_hub_download(
+                repo_id=f"TheBlindMaster/{self.model_name}-manga-bubble-seg",
+                filename="best.pt",
+                local_dir=os.path.join(
+                    BASE_DIR,
+                    "models",
+                    "bubble-detection",
+                    "YOLO_Ultralytics",
+                    self.model_name,
+                ),
+                local_dir_use_symlinks=False,
+            )
+
+            if file_path:
+                model = YOLO(file_path)
+                self.finished.emit(model)
+            else:
+                self.error.emit("Could not download or locate model file.")
+
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class OCRLoaderWorker(QtCore.QObject):
@@ -205,28 +244,43 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def selectModel(self):
-        from ultralytics import YOLO
-        import os
-        from huggingface_hub import hf_hub_download
+        selected_model_name = self.modelSelector.currentText()
 
-        selected_model = self.modelSelector.currentText()
+        self.selectModelButton.setText("Loading...")
+        self.selectModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
 
-        BASE_DIR = os.path.join(os.getcwd(), '..', '..','..')
+        self.thread = QtCore.QThread()
+        self.worker = SegmentLoaderWorker(selected_model_name)
+        self.worker.moveToThread(self.thread)
 
-        file_path = hf_hub_download(
-            repo_id=f"TheBlindMaster/{selected_model}-manga-bubble-seg",
-            filename="best.pt",
-            local_dir=os.path.join(BASE_DIR, "models", "bubble-detection", "YOLO_Ultralytics", selected_model),
-            local_dir_use_symlinks=False
-        )
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.onLoadFinished)
+        self.worker.error.connect(self.onLoadError)
 
-        if file_path:
-            try:
-                self.model = YOLO(file_path)
-                print(f"Model loaded successfully from {file_path}")
-                QtWidgets.QMessageBox.information(self, "Success", "Model Loaded.")
-            except Exception as e:
-                MessageDialog("Error", f"Could not load model: {e}", self).exec()
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    @QtCore.Slot(object)
+    def onLoadFinished(self, loaded_model):
+        self.model = loaded_model
+
+        self.selectModelButton.setText("Select model")
+        self.selectModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
+
+        QtWidgets.QMessageBox.information(self, "Success", "Segmentation model loaded.")
+
+    @QtCore.Slot(str)
+    def onLoadError(self, error_msg):
+        self.selectModelButton.setText("Select model")
+        self.selectModelButton.setEnabled(True)
+        self.modelSelector.setEnabled(True)
+
+        MessageDialog("Error", f"Could not load model: {error_msg}", self).exec()
 
     @QtCore.Slot()
     def runInference(self):
