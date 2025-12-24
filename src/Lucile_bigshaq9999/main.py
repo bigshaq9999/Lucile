@@ -57,6 +57,12 @@ class OCRLoaderWorker(QtCore.QObject):
             model_wrapper = MangaOCRModel()
             model_wrapper.load_model()
 
+            print("Warming up OCR model...")
+            dummy_img = Image.new("RGB", (100, 100), color="white")
+            # Pass a dummy bbox [x1, y1, x2, y2]
+            model_wrapper.predict(dummy_img, [[0, 0, 50, 50]])
+            print("Warm up complete.")
+
             self.finished.emit(model_wrapper)
 
         except Exception as e:
