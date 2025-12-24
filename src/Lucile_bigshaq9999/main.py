@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from Lucile_bigshaq9999.MangaTypesetter import MangaTypesetter
+from Lucile_bigshaq9999.BubbleSegmenter import BubbleSegmenter
 
 
 class SegmentLoaderWorker(QtCore.QObject):
@@ -18,7 +19,6 @@ class SegmentLoaderWorker(QtCore.QObject):
 
     def run(self):
         try:
-            from ultralytics import YOLO
             from huggingface_hub import hf_hub_download
 
             BASE_DIR = os.path.join(os.getcwd(), "..", "..", "..")
@@ -37,7 +37,7 @@ class SegmentLoaderWorker(QtCore.QObject):
             )
 
             if file_path:
-                model = YOLO(file_path)
+                model = BubbleSegmenter(file_path)
                 self.finished.emit(model)
             else:
                 self.error.emit("Could not download or locate model file.")
@@ -297,43 +297,43 @@ class SegmentBubbleTab(QtWidgets.QWidget):
 
             self.data.bubbles.clear()
 
-            conf_val = self.confidenceSlider.value() / 100.0
+            _, refined_bubbles = self.model.detect_and_segment(self.image_path)
 
-            results = self.model(self.image_path, conf=conf_val, retina_masks=True)
-            result = results[0]
-
-            if result.masks is None:
+            if not refined_bubbles:
                 QtWidgets.QMessageBox.information(self, "Warning", "No bubble found.")
+                return
 
-            masks = result.masks.xy
-            boxes = result.boxes.xyxy.cpu().numpy()
+            print(f"Found {len(refined_bubbles)} segmented bubbles")
 
-            for segment_points, box in zip(masks, boxes):
+            for bubble_data in refined_bubbles:
+                contour = bubble_data["contour"]
                 polygon = QtGui.QPolygonF()
-                for point in segment_points:
-                    polygon.append(QtCore.QPointF(point[0], point[1]))
 
-                bubble = Bubble(polygon, box.tolist())
-                self.data.bubbles.append(bubble)
+                for point_wrapper in contour:
+                    x, y = point_wrapper[0]
+                    polygon.append(QtCore.QPointF(float(x), float(y)))
+
+                x, y, w, h = bubble_data["bbox"]
+                box_xyxy = [x, y, x + w, y + h]
+
+                bubble_obj = Bubble(polygon, box_xyxy)
+                self.data.bubbles.append(bubble_obj)
 
                 poly_item = QtWidgets.QGraphicsPolygonItem(polygon)
-
-                # TODO: color picker here
                 pen = QtGui.QPen(QtCore.Qt.red)
                 pen.setWidth(2)
                 poly_item.setPen(pen)
                 poly_item.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0, 50)))
-
                 poly_item.setFlags(QtWidgets.QGraphicsItem.ItemIsSelectable)
-
-                poly_item.setData(0, bubble)
+                poly_item.setData(0, bubble_obj)
 
                 self.scene.addItem(poly_item)
 
-            print(f"Found {len(result.masks.xy)} segmented bubbles")
-
         except Exception as e:
             print(f"Inference Error: {e}")
+            import traceback
+
+            traceback.print_exc()
             MessageDialog("Error", f"Inference failed: \n{e}", self).exec()
 
     @QtCore.Slot()
