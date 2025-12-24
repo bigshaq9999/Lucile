@@ -302,6 +302,11 @@ class OCRTab(QtWidgets.QWidget):
         self.ocr_model = None
         self.model_loaded = False
 
+        self.scene = QtWidgets.QGraphicsScene(self)
+        self.view = QtWidgets.QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
+        self.view.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+
         # --- buttons --- #
         self.loadModelButton = QtWidgets.QPushButton("Load OCR Model")
         self.runOCRButton = QtWidgets.QPushButton("Run OCR")
@@ -328,10 +333,6 @@ class OCRTab(QtWidgets.QWidget):
         left_layout.addWidget(self.resultList, 1)
         left_layout.addWidget(QtWidgets.QLabel("Edit text:"))
         left_layout.addWidget(self.textEditor, 1)
-
-        self.scene = QtWidgets.QGraphicsScene(self)
-        self.view = QtWidgets.QGraphicsView(self.scene)
-        self.view.setRenderHint(QtGui.QPainter.Antialiasing)
 
         # --- right --- #
         right_widget = QtWidgets.QWidget()
