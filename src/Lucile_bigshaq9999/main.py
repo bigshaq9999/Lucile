@@ -108,6 +108,9 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         self.runInferenceButton = QtWidgets.QPushButton("Run Inference")
         self.imageList = QtWidgets.QListWidget()
 
+        self.modelSelector = QtWidgets.QComboBox()
+        self.modelSelector.addItems(["yolov8s", "yolov8n", "yolov11s", "yolov11n"])
+
         self.deleteButton = QtWidgets.QPushButton("Delete Selected Bubble")
         self.deleteButton.setShortcut(QtGui.QKeySequence.Delete)
 
@@ -130,6 +133,7 @@ class SegmentBubbleTab(QtWidgets.QWidget):
         left_widget = QtWidgets.QWidget()
         left_layout = QtWidgets.QVBoxLayout(left_widget)
 
+        left_layout.addWidget(self.modelSelector)
         left_layout.addWidget(self.selectModelButton)
         left_layout.addWidget(self.openImageButton)
         left_layout.addWidget(self.imageList)
@@ -202,9 +206,18 @@ class SegmentBubbleTab(QtWidgets.QWidget):
     @QtCore.Slot()
     def selectModel(self):
         from ultralytics import YOLO
+        import os
+        from huggingface_hub import hf_hub_download
 
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select Model", "", "PyTorch Files (*.pt)"
+        selected_model = self.modelSelector.currentText()
+
+        BASE_DIR = os.path.join(os.getcwd(), '..', '..','..')
+
+        file_path = hf_hub_download(
+            repo_id=f"TheBlindMaster/{selected_model}-manga-bubble-seg",
+            filename="best.pt",
+            local_dir=os.path.join(BASE_DIR, "models", "bubble-detection", "YOLO_Ultralytics", selected_model),
+            local_dir_use_symlinks=False
         )
 
         if file_path:
