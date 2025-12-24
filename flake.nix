@@ -7,6 +7,8 @@
       imports = [ inputs.devenv.flakeModule ];
       systems = [
         "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
       ];
 
       perSystem =
@@ -57,6 +59,8 @@
                     pylint
 
                     manga-ocr
+                    pyside6
+                    ultralytics
                     accelerate
                     sentencepiece
                     sacremoses
@@ -84,11 +88,6 @@
               };
 
             packages = builtins.attrValues {
-              inherit (pkgs.python312Packages)
-                pyside6
-                ultralytics
-                transformers
-                ;
               inherit (pkgs) git pre-commit;
               inherit (pkgs) nix-index nix-prefetch-github nix-prefetch-scripts;
             };
