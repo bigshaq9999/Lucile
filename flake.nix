@@ -87,6 +87,7 @@
               inherit (pkgs.python312Packages)
                 pyside6
                 ultralytics
+                transformers
                 ;
               inherit (pkgs) git pre-commit;
               inherit (pkgs) nix-index nix-prefetch-github nix-prefetch-scripts;
